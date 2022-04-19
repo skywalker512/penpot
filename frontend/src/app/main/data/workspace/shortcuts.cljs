@@ -383,7 +383,10 @@
    :snap-pixel-grid      {:command ","
                           :tooltip ","
                           :fn #(st/emit! (toggle-layout-flag :snap-pixel-grid))}
-   })
+
+   :show-tooltips     {:command (ds/meta-shift "?")
+                       :tooltip (ds/c-mod "shift+?")
+                       :fn #()}})
 
 (def opacity-shortcuts
   (into {} (->>

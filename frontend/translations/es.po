@@ -3604,6 +3604,10 @@ msgstr "Texto (%s)"
 msgid "workspace.toolbar.text-palette"
 msgstr "Tipografías (%s)"
 
+#: src/app/main/ui/workspace/left_toolbar.cljs
+msgid "workspace.toolbar.shortcuts"
+msgstr "Atajos de teclado (%s)"
+
 #: src/app/main/ui/workspace/sidebar/history.cljs
 msgid "workspace.undo.empty"
 msgstr "Todavía no hay cambios en el histórico"

@@ -140,4 +140,18 @@
                      (ts/schedule 300 #(st/emit! (dw/remove-layout-flag :textpalette)
                                                  (-> (dw/toggle-layout-flag :colorpalette)
                                                      (vary-meta assoc ::ev/origin "workspace-left-toolbar")))))}
-        i/palette]]]]))
+        i/palette]
+       [:li.tooltip.tooltip-right
+        {:alt (tr "workspace.toolbar.shortcuts" (sc/get-tooltip :show-tooltips))
+         :class (when (contains? layout :colorpalette) "selected")
+         :on-click (fn []
+                     (r/set-resize-type! :bottom)
+                     (dom/add-class!  (dom/get-element-by-class "color-palette") "fade-out-down")
+                     (ts/schedule 300 #(st/emit! (dw/remove-layout-flag :textpalette)
+                                                 (-> (dw/toggle-layout-flag :colorpalette)
+                                                     (vary-meta assoc ::ev/origin "workspace-left-toolbar")))))}
+        i/shortcut]]]]
+        
+        
+        
+        ))
