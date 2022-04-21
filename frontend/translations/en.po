@@ -1170,6 +1170,10 @@ msgstr "Go back"
 msgid "labels.help-center"
 msgstr "Help Center"
 
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.tutorials"
+msgstr "Tutorials"
+
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/viewer/header.cljs
 msgid "labels.hide-resolved-comments"
 msgstr "Hide resolved comments"
@@ -1204,6 +1208,11 @@ msgstr "Language"
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "labels.libraries-and-templates"
 msgstr "Libraries & Templates"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.github-repo"
+msgstr "Github repository"
+
 
 msgid "labels.link"
 msgstr "Link"
@@ -2295,6 +2304,10 @@ msgstr "File"
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.option.preferences"
 msgstr "Preferences"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.help-info"
+msgstr "Help & info"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.option.view"
@@ -3591,6 +3604,10 @@ msgstr "Typographies (%s)"
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.shortcuts"
 msgstr "Shortcuts (%s)"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "label.shortcuts"
+msgstr "Shortcuts"
 
 #: src/app/main/ui/workspace/sidebar/history.cljs
 msgid "workspace.undo.empty"

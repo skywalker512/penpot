@@ -1173,6 +1173,11 @@ msgstr "Volver"
 msgid "labels.help-center"
 msgstr "Centro de ayuda"
 
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.tutorials"
+msgstr "Tutoriales"
+
+
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/viewer/header.cljs
 msgid "labels.hide-resolved-comments"
 msgstr "Ocultar comentarios resueltos"
@@ -1207,6 +1212,10 @@ msgstr "Idioma"
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "labels.libraries-and-templates"
 msgstr "Bibliotecas y Plantillas"
+
+#: src/app/main/ui/dashboard/sidebar.cljs
+msgid "labels.github-repo"
+msgstr "Repositorio de Github"
 
 msgid "labels.link"
 msgstr "Enlace"
@@ -2313,6 +2322,10 @@ msgstr "Archivo"
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.option.preferences"
 msgstr "Preferencias"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "workspace.header.menu.option.help-info"
+msgstr "Ayuda e información"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.option.view"
@@ -3607,6 +3620,10 @@ msgstr "Tipografías (%s)"
 #: src/app/main/ui/workspace/left_toolbar.cljs
 msgid "workspace.toolbar.shortcuts"
 msgstr "Atajos de teclado (%s)"
+
+#: src/app/main/ui/workspace/header.cljs
+msgid "label.shortcuts"
+msgstr "Atajos de teclado"
 
 #: src/app/main/ui/workspace/sidebar/history.cljs
 msgid "workspace.undo.empty"

@@ -283,3 +283,67 @@ button.collapse-sidebar {
   height: 100%;
   overflow: hidden;
 }
+
+.shortcuts {
+ .shortcuts-header {
+  display: flex;
+  height: 40px;
+  background-color: $color-gray-60;
+  .shortcuts-title {
+    color: $color-white;
+    font-size: $fs12;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-grow: 1;
+  }
+  .shortcuts-close-button {
+    display: flex;
+    justify-content: center;
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 2px 0 2px 15px;
+    position: absolute;
+    top: 8px;
+    svg {
+      height: 18px;
+      width: 18px;
+      transform: rotate(45deg);
+      fill: $color-gray-20;
+    }
+  }
+ }
+ .search-field {
+   height: 60px;
+   display: flex;
+   justify-content: center;
+   align-items: center;
+   padding: 12px 10px;
+   .search-box {
+     display: flex;
+     justify-content: space-between;
+     align-items: center;
+     border: 1px solid $color-gray-30;
+     border-radius: 2px;
+     .input-text {
+      margin: 0;
+      background: $color-gray-50;
+      width: 100%;
+      color: $color-white;
+    } 
+    .icon-wrapper {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+     svg {
+      width: 16px;
+      height: 16px;
+      margin: 0 7px;
+      cursor: pointer;
+      fill: $color-gray-20;
+    }
+   }
+ }
+}
