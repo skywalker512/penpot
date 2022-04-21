@@ -13,17 +13,17 @@
 (def shortcuts
   {:go-to-search       {:tooltip (ds/meta "F")
                         :command (ds/c-mod "f")
-                        :groups [:dashboard :navigation]
+                        :groups [:nav-dashboard :navigation]
                         :fn (st/emitf (dd/go-to-search))}
 
    :go-to-drafts       {:tooltip "G D"
                         :command "g d"
-                        :groups [:dashboard :navigation]
+                        :groups [:nav-dashboard :navigation]
                         :fn (st/emitf (dd/go-to-drafts))}
 
    :go-to-libs         {:tooltip "G L"
                         :command "g l"
-                        :groups [:dashboard :navigation]
+                        :groups [:nav-dashboard :navigation]
                         :fn (st/emitf (dd/go-to-libs))}
    
    :create-new-project {:tooltip "+"

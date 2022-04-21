@@ -30,7 +30,7 @@
         workspace-shortcuts app.main.data.workspace.shortcuts/shortcuts
         path-shortcuts      app.main.data.workspace.path.shortcuts/shortcuts
         viewer-shortcuts    app.main.data.viewer.shortcuts/shortcuts
-        shortcuts-full-list {:dashboard-shortcuts dahsboard-shortcuts 
+        shortcuts-full-list {:dashboard-shortcuts dahsboard-shortcuts
                              :workspace-shortcuts workspace-shortcuts
                              :path-shortcuts path-shortcuts
                              :viewer-shortcuts viewer-shortcuts}
@@ -88,13 +88,10 @@
          :on-change on-search-change
          :on-key-press on-key-press
          :ref #(when % (set! (.-value %) search-term))}]
-       [:span.icon-wrapper i/search]]
-
-      
-      ]
+       [:span.icon-wrapper i/search]]]
      [:div.shortcut-list
-      [:ul 
+      [:ul
        (for [shortcut merged-list]
          (prn shortcut)
-        [:li {:key (:command shortcut)}
-         [:span (:command shortcut)]] )]]]))
+         [:li {:key (:command shortcut)}
+          [:span (:command shortcut)]])]]]))

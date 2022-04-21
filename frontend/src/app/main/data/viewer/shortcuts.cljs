@@ -13,12 +13,12 @@
 (def shortcuts
   {:increase-zoom      {:tooltip "+"
                         :command "+"
-                        :groups [:viewer :zoom]
+                        :groups [:zoom-viewer :zoom]
                         :fn (st/emitf dv/increase-zoom)}
 
    :decrease-zoom      {:tooltip "-"
                         :command "-"
-                        :groups [:viewer :zoom]
+                        :groups [:zoom-viewer :zoom]
                         :fn (st/emitf dv/decrease-zoom)}
 
    :select-all         {:tooltip (ds/meta "A")
@@ -28,17 +28,17 @@
 
    :reset-zoom         {:tooltip (ds/shift "0")
                         :command "shift+0"
-                        :groups [:viewer :zoom]
+                        :groups [:zoom-viewer :zoom]
                         :fn (st/emitf dv/reset-zoom)}
 
    :toggle-zoom-style  {:tooltip "F"
                         :command "f"
-                        :groups [:viewer :zoom]
+                        :groups [:zoom-viewer :zoom]
                         :fn (st/emitf dv/toggle-zoom-style)}
 
    :toogle-fullscreen  {:tooltip (ds/shift "F")
                         :command "shift+f"
-                        :groups [:viewer :zoom]
+                        :groups [:zoom-viewer :zoom]
                         :fn (st/emitf dv/toggle-fullscreen)}
 
    :next-frame         {:tooltip ds/left-arrow
@@ -53,22 +53,22 @@
 
    :open-handoff       {:tooltip "G H"
                         :command "g h"
-                        :groups [:viewer :navigation]
+                        :groups [:nav-viewer :navigation]
                         :fn #(st/emit! (dv/go-to-section :handoff))}
 
    :open-comments      {:tooltip "G C"
                         :command "g c"
-                        :groups [:viewer :navigation]
+                        :groups [:nav-viewer :navigation]
                         :fn #(st/emit! (dv/go-to-section :comments))}
 
    :open-interactions  {:tooltip "G V"
                         :command "g v"
-                        :groups [:viewer :navigation]
+                        :groups [:nav-viewer :navigation]
                         :fn #(st/emit! (dv/go-to-section :interactions))}
 
    :open-workspace     {:tooltip "G W"
                         :command "g w"
-                        :groups [:viewer :navigation]
+                        :groups [:nav-viewer :navigation]
                         :fn #(st/emit! (dv/go-to-workspace))}})
 
 (defn get-tooltip [shortcut]

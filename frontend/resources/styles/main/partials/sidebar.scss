@@ -326,6 +326,7 @@ button.collapse-sidebar {
      align-items: center;
      border: 1px solid $color-gray-30;
      border-radius: 2px;
+     width: 100%;
      .input-text {
       margin: 0;
       background: $color-gray-50;
@@ -345,5 +346,8 @@ button.collapse-sidebar {
       fill: $color-gray-20;
     }
    }
+ }
+ .shortcut-list {
+  border-top: 1px solid $color-gray-60;
  }
 }
