@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.svg-upload
   (:require
@@ -11,19 +11,18 @@
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
-   [app.common.pages :as cp]
    [app.common.pages.changes-builder :as pcb]
-   [app.common.pages.helpers :as cph]
    [app.common.spec :refer [max-safe-int min-safe-int]]
+   [app.common.types.shape :as cts]
+   [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.main.data.workspace.changes :as dch]
-   [app.main.data.workspace.common :as dwc]
+   [app.main.data.workspace.selection :as dws]
+   [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.state-helpers :as wsh]
-   [app.main.repo :as rp]
    [app.util.color :as uc]
    [app.util.path.parser :as upp]
    [app.util.svg :as usvg]
-   [app.util.uri :as uu]
    [beicon.core :as rx]
    [cuerdas.core :as str]
    [potok.core :as ptk]))
@@ -126,7 +125,7 @@
 
           (get-in shape [:svg-attrs :style :stroke-opacity])
           (-> (update-in [:svg-attrs :style] dissoc :stroke-opacity)
-              (assoc-in [:fills 0 :stroke-opacity] (-> (get-in shape [:svg-attrs :style :stroke-opacity])
+              (assoc-in [:strokes 0 :stroke-opacity] (-> (get-in shape [:svg-attrs :style :stroke-opacity])
                                                        (d/parse-double))))
 
           (get-in shape [:svg-attrs :stroke-width])
@@ -183,7 +182,7 @@
         (assoc :svg-attrs attrs)
         (assoc :svg-viewbox (-> (select-keys svg-data [:width :height])
                                 (assoc :x offset-x :y offset-y)))
-        (cp/setup-rect-selrect))))
+        (cts/setup-rect-selrect))))
 
 (defn create-svg-root [frame-id svg-data]
   (let [{:keys [name x y width height offset-x offset-y]} svg-data]
@@ -195,7 +194,7 @@
          :height height
          :x (+ x offset-x)
          :y (+ y offset-y)}
-        (cp/setup-rect-selrect)
+        (cts/setup-rect-selrect)
         (assoc :svg-attrs (-> (:attrs svg-data)
                               (dissoc :viewBox :xmlns)
                               (d/without-keys usvg/inheritable-props))))))
@@ -215,7 +214,7 @@
         (assoc :svg-attrs (d/without-keys attrs usvg/inheritable-props))
         (assoc :svg-viewbox (-> (select-keys svg-data [:width :height])
                                 (assoc :x offset-x :y offset-y)))
-        (cp/setup-rect-selrect))))
+        (cts/setup-rect-selrect))))
 
 (defn create-path-shape [name frame-id svg-data {:keys [attrs] :as data}]
   (when (and (contains? attrs :d) (seq (:d attrs)))
@@ -328,7 +327,7 @@
         transform (->> svg-transform
                        (gmt/transform-in (gpt/point svg-data)))
 
-        image-url (:xlink:href attrs)
+        image-url (or (:href attrs) (:xlink:href attrs))
         image-data (get-in svg-data [:image-data image-url])
 
         rect (->> (select-keys attrs [:x :y :width :height])
@@ -354,13 +353,13 @@
 
           (merge rect-metadata)
           (assoc :svg-viewbox (select-keys rect [:x :y :width :height]))
-          (assoc :svg-attrs (dissoc attrs :x :y :width :height :xlink:href))))))
+          (assoc :svg-attrs (dissoc attrs :x :y :width :height :href :xlink:href))))))
 
 (defn parse-svg-element [frame-id svg-data element-data unames]
-  (let [{:keys [tag attrs]} element-data
+  (let [{:keys [tag attrs hidden]} element-data
         attrs (usvg/format-styles attrs)
         element-data (cond-> element-data (map? element-data) (assoc :attrs attrs))
-        name (dwc/generate-unique-name unames (or (:id attrs) (tag->name tag)))
+        name (ctst/generate-unique-name unames (or (:id attrs) (tag->name tag)))
         att-refs (usvg/find-attr-references attrs)
         references (usvg/find-def-references (:defs svg-data) att-refs)
 
@@ -397,14 +396,15 @@
                         :image       (create-image-shape name frame-id svg-data element-data)
                         #_other      (create-raw-svg name frame-id svg-data element-data)))]
         (when (some? shape)
-          (let [shape (assoc shape :fills [])
-                shape (assoc shape :strokes [])
+          (let [shape (-> shape
+                          (assoc :fills [])
+                          (assoc :strokes [])
+                          (assoc :svg-defs (select-keys (:defs svg-data) references))
+                          (setup-fill)
+                          (setup-stroke))
 
-                shape (when (some? shape)
-                        (-> shape
-                            (assoc :svg-defs (select-keys (:defs svg-data) references))
-                            (setup-fill)
-                            (setup-stroke)))
+                shape (cond-> shape
+                        hidden (assoc :hidden true))
 
                 children (cond->> (:content element-data)
                            (or (= tag :g) (= tag :svg))
@@ -416,9 +416,8 @@
     (if (some? shape)
       (let [shape-id (:id shape)
 
-            new-shape (dwc/make-new-shape shape objects selected)
+            new-shape (dwsh/make-new-shape shape objects selected)
             changes   (-> changes
-                          (pcb/with-objects objects)
                           (pcb/add-object new-shape)
                           (pcb/change-parent parent-id [new-shape] index))
 
@@ -429,37 +428,6 @@
 
       [unames changes])))
 
-(declare create-svg-shapes)
-
-(defn svg-uploaded
-  [svg-data file-id position]
-  (ptk/reify ::svg-uploaded
-    ptk/WatchEvent
-    (watch [_ _ _]
-      ;; Once the SVG is uploaded, we need to extract all the bitmap
-      ;; images and upload them separately, then proceed to create
-      ;; all shapes.
-      (->> (rx/from (usvg/collect-images svg-data))
-           (rx/map (fn [uri]
-                     (merge
-                      {:file-id file-id
-                       :is-local true}
-                      (if (str/starts-with? uri "data:")
-                        {:name "image"
-                         :content (uu/data-uri->blob uri)}
-                        {:name (uu/uri-name uri)
-                         :url uri}))))
-           (rx/mapcat (fn [uri-data]
-                        (->> (rp/mutation! (if (contains? uri-data :content)
-                                             :upload-file-media-object
-                                             :create-file-media-object-from-url) uri-data)
-                             ;; When the image uploaded fail we skip the shape
-                             ;; returning `nil` will afterward not create the shape.
-                             (rx/catch #(rx/of nil))
-                             (rx/map #(vector (:url uri-data) %)))))
-           (rx/reduce (fn [acc [url image]] (assoc acc url image)) {})
-           (rx/map #(create-svg-shapes (assoc svg-data :image-data %) position))))))
-
 (defn create-svg-shapes
   [svg-data {:keys [x y] :as position}]
   (ptk/reify ::create-svg-shapes
@@ -468,17 +436,17 @@
       (try
         (let [page-id  (:current-page-id state)
               objects  (wsh/lookup-page-objects state page-id)
-              frame-id (cph/frame-id-by-position objects position)
+              frame-id (ctst/top-nested-frame objects position)
               selected (wsh/lookup-selected state)
 
               [vb-x vb-y vb-width vb-height] (svg-dimensions svg-data)
               x (- x vb-x (/ vb-width 2))
               y (- y vb-y (/ vb-height 2))
 
-              unames (dwc/retrieve-used-names objects)
+              unames (ctst/retrieve-used-names objects)
 
               svg-name (->> (str/replace (:name svg-data) ".svg" "")
-                            (dwc/generate-unique-name unames))
+                            (ctst/generate-unique-name unames))
 
               svg-data (-> svg-data
                            (assoc :x x
@@ -499,9 +467,26 @@
               root-shape (create-svg-root frame-id svg-data)
               root-id (:id root-shape)
 
+              ;; In penpot groups have the size of their children. To respect the imported svg size and empty space let's create a transparent shape as background to respect the imported size
+              base-background-shape {:tag :rect
+                                     :attrs {:x "0"
+                                             :y "0"
+                                             :width (str (:width root-shape))
+                                             :height (str (:height root-shape))
+                                             :fill "none"
+                                             :id "base-background"}
+                                     :hidden true
+                                     :content []}
+
+              svg-data (-> svg-data
+                           (assoc :defs def-nodes)
+                           (assoc :content (into [base-background-shape] (:content svg-data))))
+
               ;; Creates the root shape
-              new-shape (dwc/make-new-shape root-shape objects selected)
+              new-shape (dwsh/make-new-shape root-shape objects selected)
+
               changes   (-> (pcb/empty-changes it page-id)
+                            (pcb/with-objects objects)
                             (pcb/add-object new-shape))
 
               root-attrs (-> (:attrs svg-data)
@@ -513,7 +498,6 @@
                       [unames changes]
                       (d/enumerate (->> (:content svg-data)
                                         (mapv #(usvg/inherit-attributes root-attrs %)))))
-
               changes (pcb/resize-parents changes
                                           (->> changes
                                                :redo-changes
@@ -523,7 +507,7 @@
                                                vec))]
 
           (rx/of (dch/commit-changes changes)
-                 (dwc/select-shapes (d/ordered-set root-id))))
+                 (dws/select-shapes (d/ordered-set root-id))))
 
         (catch :default e
           (.error js/console "Error SVG" e)

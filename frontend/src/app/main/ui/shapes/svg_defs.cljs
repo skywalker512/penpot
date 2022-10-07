@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.svg-defs
   (:require
@@ -10,10 +10,9 @@
    [app.common.data.macros :as dm]
    [app.common.geom.matrix :as gmt]
    [app.common.geom.shapes :as gsh]
-   [app.main.ui.shapes.filters :as f]
-   [app.util.object :as obj]
+   [app.common.geom.shapes.bounds :as gsb]
    [app.util.svg :as usvg]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (defn add-matrix [attrs transform-key transform-matrix]
   (update attrs
@@ -68,15 +67,17 @@
           [wrapper wrapper-props] (if (= tag :mask)
                                     ["g" #js {:className "svg-mask-wrapper"
                                               :transform (str transform)}]
-                                    [mf/Fragment (obj/new)])]
+                                    [mf/Fragment #js {}])]
 
       [:> (name tag) (clj->js attrs)
        [:> wrapper wrapper-props
-        (for [node content] [:& svg-node {:type type
-                                          :node node
-                                          :prefix-id prefix-id
-                                          :transform transform
-                                          :bounds bounds}])]])))
+        (for [[index node] (d/enumerate content)]
+          [:& svg-node {:key (dm/str "node-" index)
+                        :type type
+                        :node node
+                        :prefix-id prefix-id
+                        :transform transform
+                        :bounds bounds}])]])))
 
 (defn svg-def-bounds [svg-def shape transform]
   (let [{:keys [tag]} svg-def]
@@ -86,7 +87,7 @@
                          (d/parse-double (get-in svg-def [:attrs :width]))
                          (d/parse-double (get-in svg-def [:attrs :height])))
           (gsh/transform-rect transform))
-      (f/get-filters-bounds shape))))
+      (gsb/get-shape-filter-bounds shape))))
 
 (mf/defc svg-defs [{:keys [shape render-id]}]
   (let [svg-defs (:svg-defs shape)
@@ -107,10 +108,10 @@
           (cond->> id
             (contains? svg-defs id) (str render-id "-")))]
 
-    ;; TODO: no key?
     (when (seq svg-defs)
-      (for [svg-def (vals svg-defs)]
-        [:& svg-node {:type (:type shape)
+      (for [[key svg-def] svg-defs]
+        [:& svg-node {:key (dm/str key)
+                      :type (:type shape)
                       :node svg-def
                       :prefix-id prefix-id
                       :transform transform

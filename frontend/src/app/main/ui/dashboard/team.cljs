@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.dashboard.team
   (:require
@@ -11,6 +11,7 @@
    [app.common.spec :as us]
    [app.config :as cfg]
    [app.main.data.dashboard :as dd]
+   [app.main.data.events :as ev]
    [app.main.data.messages :as msg]
    [app.main.data.modal :as modal]
    [app.main.data.users :as du]
@@ -26,7 +27,7 @@
    [app.util.i18n :as i18n :refer [tr]]
    [beicon.core :as rx]
    [cljs.spec.alpha :as s]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc header
   {::mf/wrap [mf/memo]}
@@ -34,7 +35,9 @@
   (let [go-members           (mf/use-fn #(st/emit! (dd/go-to-team-members)))
         go-settings          (mf/use-fn #(st/emit! (dd/go-to-team-settings)))
         go-invitations       (mf/use-fn #(st/emit! (dd/go-to-team-invitations)))
-        invite-member        (mf/use-fn #(st/emit! (modal/show {:type :invite-members :team team})))
+        invite-member        (mf/use-fn 
+                              (mf/deps team)
+                              #(st/emit! (modal/show {:type :invite-members :team team :origin :team})))
 
         members-section?     (= section :dashboard-team-members)
         settings-section?    (= section :dashboard-team-settings)
@@ -77,7 +80,7 @@
         ]
        (filterv identity)))
 
-(s/def ::emails (s/and ::us/set-of-emails d/not-empty?))
+(s/def ::emails (s/and ::us/set-of-valid-emails d/not-empty?))
 (s/def ::role  ::us/keyword)
 (s/def ::team-id ::us/uuid)
 
@@ -87,7 +90,7 @@
 (mf/defc invite-members-modal
   {::mf/register modal/components
    ::mf/register-as :invite-members}
-  [{:keys [team]}]
+  [{:keys [team origin]}]
   (let [perms   (:permissions team)
         roles   (mf/use-memo (mf/deps perms) #(get-available-roles perms))
         initial (mf/use-memo (constantly {:role "editor" :team-id (:id team)}))
@@ -123,27 +126,34 @@
           (let [params (:clean-data @form)
                 mdata  {:on-success (partial on-success form)
                         :on-error   (partial on-error form)}]
-            (st/emit! (dd/invite-team-members (with-meta params mdata))
+            (st/emit! (-> (dd/invite-team-members (with-meta params mdata))
+                          (with-meta {::ev/origin origin}))
                       (dd/fetch-team-invitations))))]
 
     [:div.modal.dashboard-invite-modal.form-container
+     {:class (dom/classnames
+              :hero (= origin :hero))}
      [:& fm/form {:on-submit on-submit :form form}
       [:div.title
-       [:span.text (tr "modals.invite-member.title")]]
+       [:span.text (tr "modals.invite-team-member.title")]]
 
       (when-not (= "" @error-text)
         [:div.error
          [:span.icon i/msg-error]
          [:span.text @error-text]])
-
       [:div.form-row
+       [:p.label (tr "onboarding.choice.team-up.roles")]
+       [:& fm/select {:name :role :options roles}]]
+      [:div.form-row
+
+
        [:& fm/multi-input {:type "email"
                            :name :emails
                            :auto-focus? true
                            :trim true
                            :valid-item-fn us/parse-email
-                           :label (tr "modals.invite-member.emails")}]
-       [:& fm/select {:name :role :options roles}]]
+                           :label (tr "modals.invite-member.emails")
+                           :on-submit  on-submit}]]
 
       [:div.action-buttons
        [:& fm/submit-button {:label (tr "modals.invite-member-confirm.accept")}]]]]))
@@ -491,13 +501,14 @@
 
         resend-invitation
         (fn []
-          (let [params {:email email
+          (let [params {:emails [email]
                         :team-id (:id team)
                         :resend? true
                         :role invitation-role}
                 mdata  {:on-success on-success
                         :on-error (partial on-error email)}]
-            (st/emit! (dd/invite-team-members (with-meta params mdata))
+            (st/emit! (-> (dd/invite-team-members (with-meta params mdata))
+                          (with-meta {::ev/origin :team}))
                       (dd/fetch-team-invitations))))]
     [:div.table-row
      [:div.table-field.mail email]
@@ -592,8 +603,8 @@
 
 
     (mf/use-effect
-     (st/emitf (dd/fetch-team-members)
-               (dd/fetch-team-stats)))
+     #(st/emit! (dd/fetch-team-members)
+                (dd/fetch-team-stats)))
 
     [:*
      [:& header {:section :dashboard-team-settings
@@ -605,7 +616,7 @@
          [:div.label (tr "dashboard.team-info")]
          [:div.name (:name team)]
          [:div.icon
-          [:span.update-overlay {:on-click on-image-click} i/exit]
+          [:span.update-overlay {:on-click on-image-click} i/image]
           [:img {:src (cfg/resolve-team-photo-url team)}]
           [:& file-uploader {:accept "image/jpeg,image/png"
                              :multi false

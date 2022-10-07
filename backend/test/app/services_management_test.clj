@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.services-management-test
   (:require
@@ -18,6 +18,8 @@
 
 (t/use-fixtures :once th/state-init)
 (t/use-fixtures :each th/database-reset)
+
+;; TODO: migrate to commands
 
 (t/deftest duplicate-file
   (let [storage (-> (:app.storage/storage th/*system*)
@@ -602,3 +604,31 @@
         (t/is (= (:library-file-id item1) (:id file2))))
 
       )))
+
+(t/deftest clone-template
+  (let [prof    (th/create-profile* 1 {:is-active true})
+        data    {::th/type :clone-template
+                 :profile-id (:id prof)
+                 :project-id (:default-project-id prof)
+                 :template-id "test"}
+
+        out     (th/command! data)]
+    ;; (th/print-result! out)
+
+    (t/is (nil? (:error out)))
+    (let [result (:result out)]
+      (t/is (set? result))
+      (t/is (uuid? (first result)))
+      (t/is (= 1 (count result))))))
+
+(t/deftest retrieve-list-of-buitin-templates
+  (let [prof (th/create-profile* 1 {:is-active true})
+        data {::th/type :retrieve-list-of-builtin-templates
+              :profile-id (:id prof)}
+        out  (th/command! data)]
+    ;; (th/print-result! out)
+    (t/is (nil? (:error out)))
+    (let [result (:result out)]
+      (t/is (vector? result))
+      (t/is (= 1 (count result)))
+      (t/is (= "test" (:id (first result)))))))

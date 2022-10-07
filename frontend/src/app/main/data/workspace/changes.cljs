@@ -2,15 +2,19 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.changes
   (:require
+   [app.common.data :as d]
    [app.common.logging :as log]
    [app.common.pages :as cp]
    [app.common.pages.changes-builder :as pcb]
+   [app.common.pages.changes-spec :as pcs]
+   [app.common.pages.helpers :as cph]
    [app.common.spec :as us]
-   [app.common.spec.change :as spec.change]
+   [app.common.types.shape-tree :as ctst]
+   [app.common.uuid :as uuid]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.data.workspace.undo :as dwu]
    [app.main.store :as st]
@@ -43,7 +47,7 @@
      ptk/WatchEvent
      (watch [it state _]
        (let [page-id   (or page-id (:current-page-id state))
-             objects   (wsh/lookup-page-objects state)
+             objects   (wsh/lookup-page-objects state page-id)
              ids       (into [] (filter some?) ids)
 
              changes   (reduce
@@ -59,14 +63,74 @@
            (let [changes  (cond-> changes reg-objects? (pcb/resize-parents ids))]
              (rx/of (commit-changes changes)))))))))
 
+(defn send-update-indices
+  []
+  (ptk/reify ::send-update-indices
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (rx/of
+            (fn [state]
+              (-> state
+                  (dissoc ::update-indices-debounce)
+                  (dissoc ::update-changes))))
+           (rx/observe-on :async)))
+
+    ptk/EffectEvent
+    (effect [_ state _]
+      (doseq [[page-id changes] (::update-changes state)]
+        (uw/ask! {:cmd :update-page-indices
+                  :page-id page-id
+                  :changes changes})))))
+
+;; Update indices will debounce operations so we don't have to update
+;; the index several times (which is an expensive operation)
 (defn update-indices
   [page-id changes]
-  (ptk/reify ::update-indices
-    ptk/EffectEvent
-    (effect [_ _ _]
-      (uw/ask! {:cmd :update-page-indices
-                :page-id page-id
-                :changes changes}))))
+
+  (let [start (uuid/next)]
+    (ptk/reify ::update-indices
+      ptk/UpdateEvent
+      (update [_ state]
+        (if (nil? (::update-indices-debounce state))
+          (assoc state ::update-indices-debounce start)
+          (update-in state [::update-changes page-id] (fnil d/concat-vec []) changes)))
+
+      ptk/WatchEvent
+      (watch [_ state stream]
+        (if (= (::update-indices-debounce state) start)
+          (let [stopper (->> stream (rx/filter (ptk/type? :app.main.data.workspace/finalize)))]
+            (rx/merge
+             (->> stream
+                  (rx/filter (ptk/type? ::update-indices))
+                  (rx/debounce 50)
+                  (rx/take 1)
+                  (rx/map #(send-update-indices))
+                  (rx/take-until stopper))
+             (rx/of (update-indices page-id changes))))
+          (rx/empty))))))
+
+(defn changed-frames
+  "Extracts the frame-ids changed in the given changes"
+  [changes objects]
+
+  (let [change->ids
+        (fn [change]
+          (case (:type change)
+            :add-obj
+            [(:parent-id change)]
+
+            (:mod-obj :del-obj)
+            [(:id change)]
+
+            :mov-objects
+            (d/concat-vec (:shapes change) [(:parent-id change)])
+
+            []))]
+    (into #{}
+          (comp (mapcat change->ids)
+                (keep #(cph/get-shape-id-root-frame objects %))
+                (remove #(= uuid/zero %)))
+          changes)))
 
 (defn commit-changes
   [{:keys [redo-changes undo-changes
@@ -75,15 +139,18 @@
   (log/debug :msg "commit-changes"
              :js/redo-changes redo-changes
              :js/undo-changes undo-changes)
-  (let [error  (volatile! nil)]
+  (let [error  (volatile! nil)
+        page-id (:current-page-id @st/state)
+        frames (changed-frames redo-changes (wsh/lookup-page-objects @st/state))]
     (ptk/reify ::commit-changes
       cljs.core/IDeref
       (-deref [_]
-
         {:file-id file-id
          :hint-events @st/last-events
          :hint-origin (ptk/type origin)
-         :changes redo-changes})
+         :changes redo-changes
+         :page-id page-id
+         :frames frames})
 
       ptk/UpdateEvent
       (update [_ state]
@@ -93,10 +160,13 @@
                                 [:workspace-data]
                                 [:workspace-libraries file-id :data])]
           (try
-            (us/assert ::spec.change/changes redo-changes)
-            (us/assert ::spec.change/changes undo-changes)
+            (us/assert ::pcs/changes redo-changes)
+            (us/assert ::pcs/changes undo-changes)
 
-            (update-in state path cp/process-changes redo-changes false)
+            (update-in state path (fn [file]
+                                    (-> file
+                                        (cp/process-changes redo-changes false)
+                                        (ctst/update-object-indices page-id))))
 
             (catch :default err
               (log/error :js/error err)
@@ -122,6 +192,7 @@
                 process-page-changes
                 (fn [[page-id _changes]]
                   (update-indices page-id redo-changes))]
+
             (rx/concat
              (rx/from (map process-page-changes changes-by-pages))
 

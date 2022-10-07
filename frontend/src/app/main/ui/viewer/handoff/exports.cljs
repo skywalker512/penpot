@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.viewer.handoff.exports
   (:require
@@ -13,7 +13,7 @@
    [app.main.ui.icons :as i]
    [app.util.dom :as dom]
    [app.util.i18n :refer [tr c]]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc exports
   {::mf/wrap [#(mf/memo % =)]}
@@ -44,7 +44,7 @@
 
             ;; In other all cases we only allowed to have a single
             ;; shape-id because multiple shape-ids are handled
-            ;; separatelly by the export-modal.
+            ;; separately by the export-modal.
             (let [defaults {:page-id page-id
                             :file-id file-id
                             :name filename

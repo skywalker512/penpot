@@ -16,6 +16,7 @@
    [app.common.math :as mth]
    [app.common.pages :as cp]
    [app.common.pages.helpers :as cph]
+   [app.common.types.file :as ctf]
    [app.common.uuid :as uuid]))
 
 ;; Auxiliary functions to help create a set of changes (undo + redo)
@@ -49,7 +50,7 @@
 
 (defn with-objects
   [changes objects]
-  (let [file-data (-> (cp/make-file-data (uuid/next) uuid/zero)
+  (let [file-data (-> (ctf/make-file-data (uuid/next) uuid/zero true)
                       (assoc-in [:pages-index uuid/zero :objects] objects))]
     (vary-meta changes assoc ::file-data file-data
                              ::applied-changes-count 0)))
@@ -111,7 +112,9 @@
           redo-changes  (:redo-changes changes)
           new-changes   (if (< index (count redo-changes))
                           (->> (subvec (:redo-changes changes) index)
-                               (map #(assoc % :page-id uuid/zero)))
+                               (map #(-> %
+                                       (assoc :page-id uuid/zero)
+                                       (dissoc :component-id))))
                           [])
           new-file-data (cp/process-changes file-data new-changes)]
       (vary-meta changes assoc ::file-data new-file-data
@@ -223,6 +226,15 @@
          (update :undo-changes d/preconj del-change)
          (apply-changes-local)))))
 
+(defn add-objects
+  ([changes objects]
+   (add-objects changes objects nil))
+
+  ([changes objects params]
+   (reduce #(add-object %1 %2 params)
+           changes
+           objects)))
+
 (defn change-parent
   ([changes parent-id shapes]
    (change-parent changes parent-id shapes nil))
@@ -243,13 +255,20 @@
 
          mk-undo-change
          (fn [change-set shape]
+           (let [idx (or (cph/get-position-on-parent objects (:id shape)) 0)
+                 ;; Different index if the movement was from top to bottom or the other way
+                 ;; Similar that on frontend/src/app/main/ui/workspace/sidebar/layers.cljs
+                 ;; with the 'side' property of the on-drop
+                 idx (if (< index idx)
+                       (inc idx)
+                       idx)]
            (d/preconj
              change-set
              {:type :mov-objects
               :page-id (::page-id (meta changes))
               :parent-id (:parent-id shape)
               :shapes [(:id shape)]
-              :index (cph/get-position-on-parent objects (:id shape))}))]
+              :index idx})))] 
 
      (-> changes
          (update :redo-changes conj set-parent-change)
@@ -286,37 +305,38 @@
          update-shape
          (fn [changes id]
            (let [old-obj (get objects id)
-                 new-obj (update-fn old-obj)
+                 new-obj (update-fn old-obj)]
+             (if (= old-obj new-obj)
+               changes
+               (let [attrs (or attrs (d/concat-set (keys old-obj) (keys new-obj)))
 
-                 attrs (or attrs (d/concat-set (keys old-obj) (keys new-obj)))
+                     {rops :rops uops :uops}
+                     (reduce #(generate-operation %1 %2 old-obj new-obj ignore-geometry?)
+                             {:rops [] :uops []}
+                             attrs)
 
-                 {rops :rops uops :uops}
-                 (reduce #(generate-operation %1 %2 old-obj new-obj ignore-geometry?)
-                         {:rops [] :uops []}
-                         attrs)
+                     uops (cond-> uops
+                            (seq uops)
+                            (d/preconj {:type :set-touched :touched (:touched old-obj)}))
 
-                 uops (cond-> uops
-                        (seq uops)
-                        (d/preconj {:type :set-touched :touched (:touched old-obj)}))
+                     change (cond-> {:type :mod-obj
+                                     :id id}
 
-                 change (cond-> {:type :mod-obj
-                                 :id id}
+                              (some? page-id)
+                              (assoc :page-id page-id)
 
-                          (some? page-id)
-                          (assoc :page-id page-id)
+                              (some? component-id)
+                              (assoc :component-id component-id))]
 
-                          (some? component-id)
-                          (assoc :component-id component-id))]
+                 (cond-> changes
+                   (seq rops)
+                   (update :redo-changes conj (assoc change :operations rops))
 
-             (cond-> changes
-               (seq rops)
-               (update :redo-changes conj (assoc change :operations rops))
+                   (seq uops)
+                   (update :undo-changes d/preconj (assoc change :operations uops)))))))]
 
-               (seq uops)
-               (update :undo-changes d/preconj (assoc change :operations uops)))))]
-
-     (-> (reduce update-shape changes ids)
-         (apply-changes-local)))))
+             (-> (reduce update-shape changes ids)
+                 (apply-changes-local)))))
 
 (defn remove-objects
   [changes ids]
@@ -371,8 +391,8 @@
   (assert-page-id changes)
   (assert-objects changes)
   (let [page-id (::page-id (meta changes))
-        objects (lookup-objects changes)
 
+        objects (lookup-objects changes)
         xform   (comp
                   (mapcat #(cons % (cph/get-parent-ids objects %)))
                   (map (d/getf objects))
@@ -408,7 +428,8 @@
 
         resize-parent
         (fn [changes parent]
-          (let [children (->> parent :shapes (map (d/getf objects)))
+          (let [objects (lookup-objects changes)
+                children (->> parent :shapes (map (d/getf objects)))
                 resized-parent (cond
                                  (empty? children) ;; a parent with no children will be deleted,
                                  nil               ;; so it does not need resize
@@ -433,12 +454,12 @@
                 (if (seq rops)
                   (-> changes
                       (update :redo-changes conj (assoc change :operations rops))
-                      (update :undo-changes d/preconj (assoc change :operations uops)))
+                      (update :undo-changes d/preconj (assoc change :operations uops))
+                      (apply-changes-local))
                   changes))
               changes)))]
 
-    (-> (reduce resize-parent changes all-parents)
-        (apply-changes-local))))
+    (reduce resize-parent changes all-parents)))
 
 ;; Library changes
 
@@ -530,7 +551,7 @@
         (apply-changes-local))))
 
 (defn add-component
-  [changes id path name new-shapes updated-shapes]
+  [changes id path name new-shapes updated-shapes main-instance-id main-instance-page]
   (assert-page-id changes)
   (assert-objects changes)
   (let [page-id (::page-id (meta changes))
@@ -551,6 +572,9 @@
                                    :attr :component-root?
                                    :val (:component-root? shape)}
                                   {:type :set
+                                   :attr :main-instance?
+                                   :val (:main-instance? shape)}
+                                  {:type :set
                                    :attr :shape-ref
                                    :val (:shape-ref shape)}
                                   {:type :set
@@ -564,6 +588,8 @@
                              :id id
                              :path path
                              :name name
+                             :main-instance-id main-instance-id
+                             :main-instance-page main-instance-page
                              :shapes new-shapes})
                       (into (map mk-change) updated-shapes))))
         (update :undo-changes 
@@ -598,16 +624,34 @@
       changes)))
 
 (defn delete-component
-  [changes id]
+  [changes id components-v2]
   (assert-library changes)
   (let [library-data   (::library-data (meta changes))
         prev-component (get-in library-data [:components id])]
     (-> changes
         (update :redo-changes conj {:type :del-component
                                     :id id})
-        (update :undo-changes d/preconj {:type :add-component
-                                         :id id
-                                         :name (:name prev-component)
-                                         :path (:path prev-component)
-                                         :shapes (vals (:objects prev-component))}))))
+        (update :undo-changes
+                (fn [undo-changes]
+                  (cond-> undo-changes
+                    components-v2
+                    (d/preconj {:type :purge-component
+                                :id id})
 
+                    :always
+                    (d/preconj {:type :add-component
+                                :id id
+                                :name (:name prev-component)
+                                :path (:path prev-component)
+                                :main-instance-id (:main-instance-id prev-component)
+                                :main-instance-page (:main-instance-page prev-component)
+                                :shapes (vals (:objects prev-component))})))))))
+
+(defn restore-component
+  [changes id]
+  (assert-library changes)
+  (-> changes
+      (update :redo-changes conj {:type :restore-component
+                                  :id id})
+      (update :undo-changes d/preconj {:type :del-component
+                                       :id id})))

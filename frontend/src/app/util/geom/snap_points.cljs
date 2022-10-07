@@ -2,12 +2,14 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.geom.snap-points
   (:require
    [app.common.geom.point :as gpt]
-   [app.common.geom.shapes :as gsh]))
+   [app.common.geom.shapes :as gsh]
+   [app.common.pages.helpers :as cph]
+   [app.common.types.shape-tree :as ctst]))
 
 (defn selrect-snap-points [{:keys [x y width height] :as selrect}]
   #{(gpt/point x y)
@@ -29,11 +31,20 @@
   (when (and (not blocked) (not hidden))
     (let [shape (gsh/transform-shape shape)]
       (case (:type shape)
-        :frame (-> shape :selrect frame-snap-points)
+        :frame (-> shape :points gsh/points->selrect frame-snap-points)
         (into #{(gsh/center-shape shape)} (:points shape))))))
 
 (defn guide-snap-points
-  [guide]
-  (if (= :x (:axis guide))
+  [guide frame]
+
+  (cond
+    (and (some? frame)
+         (not (ctst/rotated-frame? frame))
+         (not (cph/root-frame? frame)))
+    #{}
+
+    (= :x (:axis guide))
     #{(gpt/point (:position guide) 0)}
+
+    :else
     #{(gpt/point 0 (:position guide))}))

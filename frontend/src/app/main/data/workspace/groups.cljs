@@ -2,17 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.groups
   (:require
    [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
-   [app.common.pages :as cp]
    [app.common.pages.changes-builder :as pcb]
    [app.common.pages.helpers :as cph]
+   [app.common.types.shape :as cts]
+   [app.common.types.shape-tree :as ctt]
    [app.main.data.workspace.changes :as dch]
-   [app.main.data.workspace.common :as dwc]
+   [app.main.data.workspace.selection :as dws]
    [app.main.data.workspace.state-helpers :as wsh]
    [beicon.core :as rx]
    [potok.core :as ptk]))
@@ -21,12 +22,11 @@
   [objects selected]
   (->> selected
        (map #(get objects %))
-       (filter #(not= :frame (:type %)))
        (map #(assoc % ::index (cph/get-position-on-parent objects (:id %))))
        (sort-by ::index)))
 
 (defn- get-empty-groups-after-group-creation
-  "An auxiliar function that finds and returns a set of ids that
+  "An auxiliary function that finds and returns a set of ids that
   corresponds to groups that should be deleted after a group creation.
 
   The corner case happens when you selects two (or more) shapes that
@@ -71,12 +71,12 @@
                            (= (count shapes) 1)
                            (= (:type (first shapes)) :group))
                     (:name (first shapes))
-                    (-> (dwc/retrieve-used-names objects)
-                        (dwc/generate-unique-name base-name)))
+                    (-> (ctt/retrieve-used-names objects)
+                        (ctt/generate-unique-name base-name)))
 
         selrect   (gsh/selection-rect shapes)
-        group     (-> (cp/make-minimal-group frame-id selrect gname)
-                      (cp/setup-shape selrect)
+        group     (-> (cts/make-minimal-group frame-id selrect gname)
+                      (cts/setup-shape selrect)
                       (assoc :shapes (mapv :id shapes)
                              :parent-id parent-id
                              :frame-id frame-id
@@ -88,13 +88,13 @@
 
         changes   (-> (pcb/empty-changes it page-id)
                       (pcb/with-objects objects)
-                      (pcb/add-object group)
+                      (pcb/add-object group {:index (::index (first shapes))})
                       (pcb/change-parent (:id group) shapes)
                       (pcb/remove-objects ids-to-delete))]
 
     [group changes]))
 
-(defn prepare-remove-group
+(defn remove-group-changes
   [it page-id group objects]
   (let [children  (mapv #(get objects %) (:shapes group))
         parent-id (cph/get-parent-id objects (:id group))
@@ -126,6 +126,18 @@
       (some? ids-to-detach)
       (pcb/update-shapes ids-to-detach detach-fn))))
 
+(defn remove-frame-changes
+  [it page-id frame objects]
+
+  (let [children      (mapv #(get objects %) (:shapes frame))
+        parent-id     (cph/get-parent-id objects (:id frame))
+        idx-in-parent (cph/get-position-on-parent objects (:id frame))]
+
+    (-> (pcb/empty-changes it page-id)
+        (pcb/with-objects objects)
+        (pcb/change-parent parent-id children idx-in-parent)
+        (pcb/remove-objects [(:id frame)]))))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; GROUPS
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -143,23 +155,28 @@
           (let [[group changes]
                 (prepare-create-group it objects page-id shapes "Group-1" false)]
             (rx/of (dch/commit-changes changes)
-                   (dwc/select-shapes (d/ordered-set (:id group))))))))))
+                   (dws/select-shapes (d/ordered-set (:id group))))))))))
 
 (def ungroup-selected
   (ptk/reify ::ungroup-selected
     ptk/WatchEvent
     (watch [it state _]
-      (let [page-id   (:current-page-id state)
-            objects   (wsh/lookup-page-objects state page-id)
-            is-group? #(or (= :bool (:type %)) (= :group (:type %)))
-            lookup    #(get objects %)
-            prepare   #(prepare-remove-group it page-id % objects)
+      (let [page-id       (:current-page-id state)
+            objects       (wsh/lookup-page-objects state page-id)
+
+            prepare
+            (fn [shape-id]
+              (let [shape (get objects shape-id)]
+                (cond
+                  (or (cph/group-shape? shape) (cph/bool-shape? shape))
+                  (remove-group-changes it page-id shape objects)
+
+                  (cph/frame-shape? shape)
+                  (remove-frame-changes it page-id shape objects))))
 
             changes-list (sequence
-                           (comp (map lookup)
-                                 (filter is-group?)
-                                 (map prepare))
-                           (wsh/lookup-selected state))
+                          (keep prepare)
+                          (wsh/lookup-selected state))
 
             changes {:redo-changes (vec (mapcat :redo-changes changes-list))
                      :undo-changes (vec (mapcat :undo-changes changes-list))
@@ -204,7 +221,7 @@
                              (pcb/resize-parents [(:id group)]))]
 
             (rx/of (dch/commit-changes changes)
-                   (dwc/select-shapes (d/ordered-set (:id group))))))))))
+                   (dws/select-shapes (d/ordered-set (:id group))))))))))
 
 (def unmask-group
   (ptk/reify ::unmask-group

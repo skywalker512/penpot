@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
-"PO-Revision-Date: 2022-03-12 23:56+0000\n"
-"Last-Translator: Rodion Borisov <vintprox@gmail.com>\n"
+"PO-Revision-Date: 2022-08-18 16:16+0000\n"
+"Last-Translator: andy <andres.gonzalez79@gmail.com>\n"
 "Language-Team: Russian "
 "<https://hosted.weblate.org/projects/penpot/frontend/ru/>\n"
 "Language: ru\n"
@@ -9,7 +9,7 @@ msgstr ""
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
-"X-Generator: Weblate 4.12-dev\n"
+"X-Generator: Weblate 4.14-dev\n"
 
 #: src/app/main/ui/auth/register.cljs
 msgid "auth.already-have-account"
@@ -63,30 +63,29 @@ msgstr "Рады видеть Вас снова!"
 
 #: src/app/main/ui/auth/register.cljs, src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-github-submit"
-msgstr "Вход через Gitnub"
+msgstr "GitHub"
 
 #: src/app/main/ui/auth/register.cljs, src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-gitlab-submit"
-msgstr "Вход через Gitlab"
+msgstr "GitLab"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-google-submit"
-msgstr "Войти с Google"
+msgstr "Google"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-ldap-submit"
-msgstr "Вход через LDAP"
+msgstr "LDAP"
 
 #: src/app/main/ui/auth/login.cljs
 msgid "auth.login-with-oidc-submit"
-msgstr "Войти с OpenID (SSO)"
+msgstr "OpenID"
 
 #: src/app/main/ui/auth/recovery.cljs
 msgid "auth.new-password"
 msgstr "Введите новый пароль"
 
 #: src/app/main/ui/auth/register.cljs
-#, fuzzy
 msgid "auth.newsletter-subscription"
 msgstr "Я хочу подписаться на рассылку Penpot."
 
@@ -99,7 +98,6 @@ msgid "auth.notifications.password-changed-successfully"
 msgstr "Пароль изменен успешно"
 
 #: src/app/main/ui/auth/recovery_request.cljs
-#, fuzzy
 msgid "auth.notifications.profile-not-verified"
 msgstr "Профиль не подтверждён: пожалуйста, проверьте почту."
 
@@ -171,7 +169,6 @@ msgstr ""
 msgid "auth.verification-email-sent"
 msgstr "Мы отправили письмо с подтверждением на"
 
-#, fuzzy
 msgid "common.share-link.confirm-deletion-link-description"
 msgstr ""
 "Вы точно хотите удалить эту ссылку? После этого она перестанет быть "
@@ -186,34 +183,14 @@ msgstr "Ссылка скопирована"
 msgid "common.share-link.link-deleted-success"
 msgstr "Ссылка удалена"
 
-#, fuzzy
-msgid "common.share-link.permissions-can-access"
-msgstr "Могут зайти"
-
-msgid "common.share-link.permissions-can-view"
-msgstr "Могут видеть"
-
 msgid "common.share-link.permissions-hint"
 msgstr "Доступ открыт для получателей ссылки"
 
 msgid "common.share-link.placeholder"
 msgstr "Ссылка появится здесь"
 
-msgid "common.share-link.remove-link"
-msgstr "Удалить ссылку"
-
-#, fuzzy
 msgid "common.share-link.title"
 msgstr "Поделиться прототипами"
-
-msgid "common.share-link.view-all-pages"
-msgstr "Все страницы"
-
-msgid "common.share-link.view-current-page"
-msgstr "Только эту страницу"
-
-msgid "common.share-link.view-selected-pages"
-msgstr "Выбранные страницы"
 
 #: src/app/main/ui/workspace/header.cljs, src/app/main/ui/dashboard/file_menu.cljs
 msgid "dashboard.add-shared"
@@ -224,13 +201,12 @@ msgid "dashboard.change-email"
 msgstr "Сменить email адрес"
 
 #: src/app/main/data/dashboard.cljs, src/app/main/data/dashboard.cljs
-#, fuzzy
 msgid "dashboard.copy-suffix"
 msgstr "(копия)"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "dashboard.create-new-team"
-msgstr "+ Создать новую команду"
+msgstr "Создать новую команду"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
 msgid "dashboard.default-team-name"
@@ -263,7 +239,7 @@ msgstr ""
 "[\"Libraries & templates\"](https://penpot.app/libraries-templates.html)"
 
 msgid "dashboard.export-frames"
-msgstr "Экспорт кадров в PDF..."
+msgstr "Экспорт кадров в PDF"
 
 msgid "dashboard.export-multi"
 msgstr "Экспорт файлов Penpot (%s)"
@@ -285,7 +261,6 @@ msgstr "Файлы с общих библиотек будут включены 
 msgid "dashboard.export.options.all.title"
 msgstr "Экспорт общих библиотек"
 
-#, fuzzy
 msgid "dashboard.export.options.detach.message"
 msgstr ""
 "Общие библиотеки не будут включены в экспорт, и вложенные ресурсы не "
@@ -294,13 +269,11 @@ msgstr ""
 msgid "dashboard.export.options.detach.title"
 msgstr "Воспринимать общие библиотеки как обычные объекты"
 
-#, fuzzy
 msgid "dashboard.export.options.merge.message"
 msgstr ""
 "Ваш файл будет экспортирован с включением всех внешних ресурсов в "
 "библиотеку экспорта."
 
-#, fuzzy
 msgid "dashboard.export.options.merge.title"
 msgstr "Включить общие библиотеки в библиотеку экспорта"
 
@@ -349,7 +322,6 @@ msgstr "Импорт файлов Penpot"
 msgid "dashboard.import.analyze-error"
 msgstr "Ой! Не вышло импортировать этот файл"
 
-#, fuzzy
 msgid "dashboard.import.import-error"
 msgstr "Есть проблема с импортом файла."
 
@@ -455,7 +427,6 @@ msgstr "Участников: %s"
 msgid "dashboard.open-in-new-tab"
 msgstr "Открыть в новой вкладке"
 
-#, fuzzy
 msgid "dashboard.options"
 msgstr "Опции"
 
@@ -480,7 +451,6 @@ msgid "dashboard.remove-account"
 msgstr "Хотите удалить свой аккаунт?"
 
 #: src/app/main/ui/workspace/header.cljs, src/app/main/ui/dashboard/file_menu.cljs
-#, fuzzy
 msgid "dashboard.remove-shared"
 msgstr "Снять статус общей библиотеки"
 
@@ -532,12 +502,7 @@ msgstr "Ваши файлы перемещены"
 msgid "dashboard.success-move-project"
 msgstr "Ваш проект перемещён"
 
-#: src/app/main/ui/dashboard/sidebar.cljs
-msgid "dashboard.switch-team"
-msgstr "Сменить команду"
-
 #: src/app/main/ui/dashboard/team.cljs
-#, fuzzy
 msgid "dashboard.team-info"
 msgstr "О команде"
 
@@ -601,12 +566,10 @@ msgstr "Вы уверены?"
 msgid "ds.updated-at"
 msgstr "Обновлено: %s"
 
-#, fuzzy
 msgid "errors.auth.unable-to-login"
 msgstr "Кажется, сеанс истёк. Войдите снова."
 
 #: src/app/main/data/workspace.cljs
-#, fuzzy
 msgid "errors.clipboard-not-implemented"
 msgstr "Ваш браузер не поддерживает этот метод вставки"
 
@@ -622,7 +585,6 @@ msgid "errors.email-as-password"
 msgstr "Нельзя в качестве пароля указывать адрес электронной почты"
 
 #: src/app/main/ui/auth/register.cljs, src/app/main/ui/auth/recovery_request.cljs, src/app/main/ui/settings/change_email.cljs, src/app/main/ui/dashboard/team.cljs
-#, fuzzy
 msgid "errors.email-has-permanent-bounces"
 msgstr "Получатель «%s» постоянно не доступен."
 
@@ -651,19 +613,17 @@ msgstr "Формат изображения не поддерживается (�
 
 #: src/app/main/data/workspace/persistence.cljs
 msgid "errors.media-too-large"
-msgstr "Изображение слишком большое для вставки (должно быть меньше 5mb)."
+msgstr "Изображение слишком большое для вставки."
 
 #: src/app/main/data/workspace/persistence.cljs, src/app/main/data/media.cljs
 msgid "errors.media-type-mismatch"
 msgstr "Формат медиа не соответует расширению файла."
 
 #: src/app/main/data/workspace/persistence.cljs, src/app/main/data/workspace/persistence.cljs, src/app/main/data/workspace/persistence.cljs, src/app/main/data/workspace/persistence.cljs, src/app/main/data/media.cljs
-#, fuzzy
 msgid "errors.media-type-not-allowed"
 msgstr "Неверное медиа."
 
 #: src/app/main/ui/dashboard/team.cljs
-#, fuzzy
 msgid "errors.member-is-muted"
 msgstr "Невозможно пригласить адресата с недоступным адресом электронной почты."
 
@@ -691,10 +651,6 @@ msgstr "Нужно переназначить роль владельца пер
 
 msgid "errors.terms-privacy-agreement-invalid"
 msgstr "Вы должны принять наши правила использования и политику конфиденциальности."
-
-#: src/app/main/ui/auth/verify_token.cljs
-msgid "errors.token-expired"
-msgstr "Токен истёк"
 
 #: src/app/main/data/media.cljs, src/app/main/ui/workspace/sidebar/options/menus/exports.cljs, src/app/main/ui/handoff/exports.cljs
 msgid "errors.unexpected-error"
@@ -725,26 +681,6 @@ msgid "feedback.description"
 msgstr "Подробности"
 
 #: src/app/main/ui/settings/feedback.cljs
-msgid "feedback.discussions-go-to"
-msgstr "Зайти в обсуждения"
-
-#: src/app/main/ui/settings/feedback.cljs
-msgid "feedback.discussions-subtitle1"
-msgstr "Посетите форум для совместного обсуждения планов на Penpot."
-
-#: src/app/main/ui/settings/feedback.cljs
-msgid "feedback.discussions-subtitle2"
-msgstr ""
-"Там вы можете задавать вопросы, проследить за неоднозначными задачами, и "
-"поучаствовать в принятии решений по проекту."
-
-#: src/app/main/ui/settings/feedback.cljs
-#, fuzzy
-msgid "feedback.discussions-title"
-msgstr "Командный форум"
-
-#: src/app/main/ui/settings/feedback.cljs
-#, fuzzy
 msgid "feedback.subject"
 msgstr "Краткое описание"
 
@@ -799,7 +735,6 @@ msgid "handoff.attributes.image.width"
 msgstr "Ширина"
 
 #: src/app/main/ui/handoff/attributes/layout.cljs
-#, fuzzy
 msgid "handoff.attributes.layout"
 msgstr "Размещение"
 
@@ -880,7 +815,6 @@ msgid "handoff.attributes.stroke.width"
 msgstr "Толщина"
 
 #: src/app/main/ui/handoff/attributes/text.cljs
-#, fuzzy
 msgid "handoff.attributes.typography"
 msgstr "Текст"
 
@@ -893,7 +827,6 @@ msgid "handoff.attributes.typography.font-size"
 msgstr "Размер"
 
 #: src/app/main/ui/handoff/attributes/text.cljs
-#, fuzzy
 msgid "handoff.attributes.typography.font-style"
 msgstr "Шрифт"
 
@@ -1116,7 +1049,6 @@ msgid "labels.go-back"
 msgstr "Назад"
 
 #: src/app/main/ui/dashboard/sidebar.cljs
-#, fuzzy
 msgid "labels.help-center"
 msgstr "Помощь"
 
@@ -1300,12 +1232,10 @@ msgid "labels.shared-libraries"
 msgstr "Общие библиотеки"
 
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/viewer/header.cljs
-#, fuzzy
 msgid "labels.show-all-comments"
 msgstr "Показать все"
 
 #: src/app/main/ui/workspace/comments.cljs, src/app/main/ui/viewer/header.cljs
-#, fuzzy
 msgid "labels.show-your-comments"
 msgstr "Показать только ваши"
 
@@ -1337,11 +1267,9 @@ msgid "labels.uploading"
 msgstr "Загрузка…"
 
 #: src/app/main/ui/dashboard/team.cljs
-#, fuzzy
 msgid "labels.viewer"
 msgstr "Наблюдатель"
 
-#, fuzzy
 msgid "labels.workspace"
 msgstr "Рабочая область"
 
@@ -1449,14 +1377,12 @@ msgstr "Точно хотите удалить несколько файлов (
 msgid "modals.delete-file-multi-confirm.title"
 msgstr "Удаление файлов (%s)"
 
-#, fuzzy
 msgid "modals.delete-font-variant.message"
 msgstr "Вы действительно хотите удалить это начертание шрифта?"
 
 msgid "modals.delete-font-variant.title"
 msgstr "Удаление начертания шрифта"
 
-#, fuzzy
 msgid "modals.delete-font.message"
 msgstr "Вы действительно хотите удалить этот шрифт?"
 
@@ -1532,11 +1458,6 @@ msgstr "Вы не можете удалить профиль. Сначала с�
 #: src/app/main/ui/settings/profile.cljs, src/app/main/ui/settings/options.cljs
 msgid "notifications.profile-saved"
 msgstr "Профиль успешно сохранен!"
-
-msgid "onboarding.choice.team-up-desc"
-msgstr ""
-"Вы с кем-то работаете? Создайте команду и пригласите людей для совместного "
-"редактирования проектов и хранения ресурсов."
 
 msgid "onboarding.slide.1.desc1"
 msgstr "Создайте различные взаимодействия для имитации поведения продукта."
@@ -1816,16 +1737,8 @@ msgid "workspace.header.menu.hide-artboard-names"
 msgstr "Скрыть имена кадров"
 
 #: src/app/main/ui/workspace/header.cljs
-msgid "workspace.header.menu.hide-assets"
-msgstr "Спрятать ресурсы"
-
-#: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.hide-grid"
 msgstr "Спрятать сетку"
-
-#: src/app/main/ui/workspace/header.cljs
-msgid "workspace.header.menu.hide-layers"
-msgstr "Спрятать слои"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.hide-palette"
@@ -1844,16 +1757,8 @@ msgid "workspace.header.menu.show-artboard-names"
 msgstr "Показать имена кадров"
 
 #: src/app/main/ui/workspace/header.cljs
-msgid "workspace.header.menu.show-assets"
-msgstr "Показать ресурсы"
-
-#: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.show-grid"
 msgstr "Показать сетку"
-
-#: src/app/main/ui/workspace/header.cljs
-msgid "workspace.header.menu.show-layers"
-msgstr "Показать слои"
 
 #: src/app/main/ui/workspace/header.cljs
 msgid "workspace.header.menu.show-palette"
@@ -1900,7 +1805,6 @@ msgid "workspace.libraries.library"
 msgstr ""
 
 #: src/app/main/ui/workspace/libraries.cljs
-#, fuzzy
 msgid "workspace.libraries.no-libraries-need-sync"
 msgstr "Общие библиотеки не нуждаются в обновлении"
 
@@ -1909,7 +1813,6 @@ msgid "workspace.libraries.no-matches-for"
 msgstr "Совпадений для “%s“ не найдено"
 
 #: src/app/main/ui/workspace/libraries.cljs
-#, fuzzy
 msgid "workspace.libraries.no-shared-libraries-available"
 msgstr "Общие библиотеки отсутсвуют"
 
@@ -2072,10 +1975,6 @@ msgstr "Строки"
 #: src/app/main/ui/workspace/sidebar/options/menus/frame_grid.cljs
 msgid "workspace.options.grid.square"
 msgstr "Квадрат"
-
-#: src/app/main/ui/workspace/sidebar/options/menus/frame_grid.cljs
-msgid "workspace.options.grid.title"
-msgstr "Сетка и Макеты"
 
 #: src/app/main/ui/workspace/sidebar/options/menus/fill.cljs
 msgid "workspace.options.group-fill"
@@ -2387,7 +2286,6 @@ msgid "workspace.updates.dismiss"
 msgstr ""
 
 #: src/app/main/data/workspace/libraries.cljs
-#, fuzzy
 msgid "workspace.updates.there-are-updates"
 msgstr "Обнаружены обновления общих библиотек"
 

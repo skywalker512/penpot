@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.rpc.mutations.fonts
   (:require
@@ -10,17 +10,16 @@
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
-   [app.config :as cf]
    [app.db :as db]
    [app.media :as media]
+   [app.rpc.doc :as-alias doc]
    [app.rpc.queries.teams :as teams]
-   [app.rpc.rlimit :as rlimit]
+   [app.rpc.semaphore :as rsem]
    [app.storage :as sto]
    [app.util.services :as sv]
    [app.util.time :as dt]
    [clojure.spec.alpha :as s]
-   [promesa.core :as p]
-   [promesa.exec :as px]))
+   [promesa.core :as p]))
 
 (declare create-font-variant)
 
@@ -41,24 +40,21 @@
                    ::font-id ::font-family ::font-weight ::font-style]))
 
 (sv/defmethod ::create-font-variant
-  {::rlimit/permits (cf/get :rlimit-font)}
   [{:keys [pool] :as cfg} {:keys [team-id profile-id] :as params}]
   (let [cfg (update cfg :storage media/configure-assets-storage)]
     (teams/check-edition-permissions! pool profile-id team-id)
     (create-font-variant cfg params)))
 
 (defn create-font-variant
-  [{:keys [storage pool executors] :as cfg} {:keys [data] :as params}]
+  [{:keys [storage pool executor semaphores] :as cfg} {:keys [data] :as params}]
   (letfn [(generate-fonts [data]
-            (px/with-dispatch (:blocking executors)
+            (rsem/with-dispatch (:process-font semaphores)
               (media/run {:cmd :generate-fonts :input data})))
 
           ;; Function responsible of calculating cryptographyc hash of
-          ;; the provided data. Even though it uses the hight
-          ;; performance BLAKE2b algorithm, we prefer to schedule it
-          ;; to be executed on the blocking executor.
+          ;; the provided data.
           (calculate-hash [data]
-            (px/with-dispatch (:blocking executors)
+            (rsem/with-dispatch (:process-font semaphores)
               (sto/calculate-hash data)))
 
           (validate-data [data]
@@ -71,9 +67,9 @@
             data)
 
           (persist-font-object [data mtype]
-            (when-let [fdata (get data mtype)]
-              (p/let [hash    (calculate-hash fdata)
-                      content (-> (sto/content fdata)
+            (when-let [resource (get data mtype)]
+              (p/let [hash    (calculate-hash resource)
+                      content (-> (sto/content resource)
                                   (sto/wrap-with-hash hash))]
                 (sto/put-object! storage {::sto/content content
                                           ::sto/touched-at (dt/now)
@@ -109,8 +105,8 @@
 
     (-> (generate-fonts data)
         (p/then validate-data)
-        (p/then persist-fonts (:default executors))
-        (p/then insert-into-db (:default executors)))))
+        (p/then persist-fonts executor)
+        (p/then insert-into-db executor))))
 
 ;; --- UPDATE FONT FAMILY
 
@@ -151,6 +147,7 @@
   (s/keys :req-un [::profile-id ::team-id ::id]))
 
 (sv/defmethod ::delete-font-variant
+  {::doc/added "1.3"}
   [{:keys [pool] :as cfg} {:keys [id team-id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (teams/check-edition-permissions! conn profile-id team-id)

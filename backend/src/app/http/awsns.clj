@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http.awsns
   "AWS SNS webhook handler for bounces."
@@ -11,11 +11,14 @@
    [app.common.logging :as l]
    [app.db :as db]
    [app.db.sql :as sql]
+   [app.http.client :as http]
+   [app.tokens :as tokens]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [integrant.core :as ig]
    [jsonista.core :as j]
    [promesa.exec :as px]
+   [yetti.request :as yrq]
    [yetti.response :as yrs]))
 
 (declare parse-json)
@@ -23,17 +26,18 @@
 (declare parse-notification)
 (declare process-report)
 
-(s/def ::http-client fn?)
+(s/def ::http-client ::http/client)
+(s/def ::sprops map?)
 
 (defmethod ig/pre-init-spec ::handler [_]
-  (s/keys :req-un [::db/pool ::http-client]))
+  (s/keys :req-un [::db/pool ::http-client ::sprops]))
 
 (defmethod ig/init-key ::handler
   [_ {:keys [executor] :as cfg}]
   (fn [request respond _]
-    (let [data (slurp (:body request))]
-      (px/run! executor #(handle-request cfg data))
-      (respond (yrs/response 200)))))
+    (let [data (-> request yrq/body slurp)]
+      (px/run! executor #(handle-request cfg data)))
+    (respond (yrs/response 200))))
 
 (defn handle-request
   [{:keys [http-client] :as cfg} data]
@@ -45,7 +49,7 @@
         (let [surl   (get body "SubscribeURL")
               stopic (get body "TopicArn")]
           (l/info :action "subscription received" :topic stopic :url surl)
-          (http-client {:uri surl :method :post :timeout 10000} {:sync? true}))
+          (http/req! http-client {:uri surl :method :post :timeout 10000} {:sync? true}))
 
         (= mtype "Notification")
         (when-let [message (parse-json (get body "Message"))]
@@ -96,10 +100,10 @@
           (get mail "headers")))
 
 (defn- extract-identity
-  [{:keys [tokens] :as cfg} headers]
+  [{:keys [sprops]} headers]
   (let [tdata (get headers "x-penpot-data")]
     (when-not (str/empty? tdata)
-      (let [result (tokens :verify {:token tdata :iss :profile-identity})]
+      (let [result (tokens/verify sprops {:token tdata :iss :profile-identity})]
         (:profile-id result)))))
 
 (defn- parse-notification

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.text-editor
   "Draft related abstraction functions."
@@ -72,10 +72,10 @@
 (defn get-editor-current-inline-styles
   [state]
   (if (impl/isCurrentEmpty state)
-    (let [block (impl/getCurrentBlock state)]
-      (get-editor-block-data block))
+    (get-editor-current-block-data state)
     (-> (.getCurrentInlineStyle ^js state)
-        (txt/styles-to-attrs))))
+        (txt/styles-to-attrs)
+        (dissoc :text-align :text-direction))))
 
 (defn update-editor-current-block-data
   [state attrs]
@@ -89,7 +89,8 @@
             (impl/updateBlockData state block-key (clj->js attrs))
 
             (let [attrs (-> (impl/getInlineStyle state block-key 0)
-                            (txt/styles-to-attrs))]
+                            (txt/styles-to-attrs)
+                            (dissoc :text-align :text-direction))]
               (impl/updateBlockData state block-key (clj->js attrs)))))
 
         state (impl/applyInlineStyle state (txt/attrs-to-styles attrs))

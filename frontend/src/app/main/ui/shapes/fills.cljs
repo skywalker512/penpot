@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.fills
   (:require
@@ -14,7 +14,7 @@
    [app.main.ui.shapes.embed :as embed]
    [app.main.ui.shapes.gradients :as grad]
    [app.util.object :as obj]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc fills
   {::mf/wrap-props false}
@@ -41,7 +41,7 @@
                   (cfg/resolve-file-media (:fill-image shape)))
 
             embed (embed/use-data-uris [uri])
-            transform (gsh/transform-matrix shape)
+            transform (gsh/transform-str shape)
 
             ;; When true the image has not loaded yet
             loading? (and (some? uri) (not (contains? embed uri)))
@@ -53,7 +53,8 @@
                                        :width width
                                        :data-loading loading?}
                             (= :path (:type shape))
-                            (obj/set! "patternTransform" transform))]
+                            (obj/set! "patternTransform" transform))
+            type (:type shape)]
 
         (for [[shape-index shape] (d/enumerate (or (:position-data shape) [shape]))]
           [:* {:key (dm/str shape-index)}
@@ -73,12 +74,13 @@
                               (obj/set! "id" fill-id))
               [:g
                (for [[fill-index value] (-> (d/enumerate (:fills shape [])) reverse)]
-                 [:> :rect (-> (attrs/extract-fill-attrs value render-id fill-index)
+                 [:> :rect (-> (attrs/extract-fill-attrs value render-id fill-index type)
                                (obj/set! "key" (dm/str fill-index))
                                (obj/set! "width" width)
                                (obj/set! "height" height))])
 
                (when has-image?
-                 [:image {:xlinkHref (get embed uri uri)
+                 [:image {:href (get embed uri uri)
+                          :preserveAspectRatio "none"
                           :width width
                           :height height}])]])])))))

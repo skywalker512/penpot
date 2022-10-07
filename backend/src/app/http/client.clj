@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http.client
   "Http client abstraction layer."
@@ -11,6 +11,8 @@
    [clojure.spec.alpha :as s]
    [integrant.core :as ig]
    [java-http-clj.core :as http]))
+
+(s/def ::client fn?)
 
 (defmethod ig/pre-init-spec :app.http/client [_]
   (s/keys :req-un [::wrk/executor]))
@@ -28,3 +30,11 @@
            (http/send req {:client client :as response-type})
            (http/send-async req {:client client :as response-type}))))
       {::client client})))
+
+(defn req!
+  "A convencience toplevel function for gradual migration to a new API
+  convention."
+  ([client request]
+   (client request))
+  ([client request options]
+   (client request options)))

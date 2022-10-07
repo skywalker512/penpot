@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.rpc.mutations.teams
   (:require
@@ -20,8 +20,9 @@
    [app.rpc.permissions :as perms]
    [app.rpc.queries.profile :as profile]
    [app.rpc.queries.teams :as teams]
-   [app.rpc.rlimit :as rlimit]
+   [app.rpc.semaphore :as rsem]
    [app.storage :as sto]
+   [app.tokens :as tokens]
    [app.util.services :as sv]
    [app.util.time :as dt]
    [clojure.spec.alpha :as s]
@@ -289,7 +290,6 @@
   (s/keys :req-un [::profile-id ::team-id ::file]))
 
 (sv/defmethod ::update-team-photo
-  {::rlimit/permits (cf/get :rlimit-image)}
   [cfg {:keys [file] :as params}]
   ;; Validate incoming mime type
   (media/validate-media-type! file #{"image/jpeg" "image/png" "image/webp"})
@@ -297,8 +297,8 @@
     (update-team-photo cfg params)))
 
 (defn update-team-photo
-  [{:keys [pool storage executors] :as cfg} {:keys [profile-id team-id] :as params}]
-  (p/let [team  (px/with-dispatch (:default executors)
+  [{:keys [pool storage executor] :as cfg} {:keys [profile-id team-id] :as params}]
+  (p/let [team  (px/with-dispatch executor
                   (teams/retrieve-team pool profile-id team-id))
           photo (upload-photo cfg params)]
 
@@ -315,13 +315,13 @@
     (assoc team :photo-id (:id photo))))
 
 (defn upload-photo
-  [{:keys [storage executors] :as cfg} {:keys [file]}]
+  [{:keys [storage semaphores] :as cfg} {:keys [file]}]
   (letfn [(get-info [content]
-            (px/with-dispatch (:blocking executors)
+            (rsem/with-dispatch (:process-image semaphores)
               (media/run {:cmd :info :input content})))
 
           (generate-thumbnail [info]
-            (px/with-dispatch (:blocking executors)
+            (rsem/with-dispatch (:process-image semaphores)
               (media/run {:cmd :profile-thumbnail
                           :format :jpeg
                           :quality 85
@@ -330,11 +330,9 @@
                           :input info})))
 
           ;; Function responsible of calculating cryptographyc hash of
-          ;; the provided data. Even though it uses the hight
-          ;; performance BLAKE2b algorithm, we prefer to schedule it
-          ;; to be executed on the blocking executor.
+          ;; the provided data.
           (calculate-hash [data]
-            (px/with-dispatch (:blocking executors)
+            (rsem/with-dispatch (:process-image semaphores)
               (sto/calculate-hash data)))]
 
     (p/let [info    (get-info file)
@@ -342,18 +340,18 @@
             hash    (calculate-hash (:data thumb))
             content (-> (sto/content (:data thumb) (:size thumb))
                         (sto/wrap-with-hash hash))]
-      (sto/put-object! storage {::sto/content content
-                                ::sto/deduplicate? true
-                                :bucket "profile"
-                                :content-type (:mtype thumb)}))))
-
+      (rsem/with-dispatch (:process-image semaphores)
+        (sto/put-object! storage {::sto/content content
+                                  ::sto/deduplicate? true
+                                  :bucket "profile"
+                                  :content-type (:mtype thumb)})))))
 
 ;; --- Mutation: Invite Member
 
 (declare create-team-invitation)
 
 (s/def ::email ::us/email)
-(s/def ::emails ::us/set-of-emails)
+(s/def ::emails ::us/set-of-valid-emails)
 (s/def ::invite-team-member
   (s/keys :req-un [::profile-id ::team-id ::role]
           :opt-un [::email ::emails]))
@@ -378,18 +376,17 @@
                   :code :profile-is-muted
                   :hint "looks like the profile has reported repeatedly as spam or has permanent bounces"))
 
-      (doseq [email emails]
-        (create-team-invitation
-         (assoc cfg
-                :email email
-                :conn conn
-                :team team
-                :profile profile
-                :role role))
-        )
-
-      (with-meta {}
-        {::audit/props {:invitations (count emails)}}))))
+      (let [invitations (->> emails
+                             (map (fn [email]
+                                    (assoc cfg
+                                           :email email
+                                           :conn conn
+                                           :team team
+                                           :profile profile
+                                           :role role)))
+                             (map create-team-invitation))]
+        (with-meta (vec invitations)
+          {::audit/props {:invitations (count invitations)}})))))
 
 (def sql:upsert-team-invitation
   "insert into team_invitation(team_id, email_to, role, valid_until)
@@ -398,52 +395,78 @@
           update set role = ?, valid_until = ?, updated_at = now();")
 
 (defn- create-team-invitation
-  [{:keys [conn tokens team profile role email] :as cfg}]
+  [{:keys [conn sprops team profile role email] :as cfg}]
   (let [member    (profile/retrieve-profile-data-by-email conn email)
-        token-exp (dt/in-future "48h")
-        itoken    (tokens :generate
-                          {:iss :team-invitation
-                           :exp token-exp
-                           :profile-id (:id profile)
-                           :role role
-                           :team-id (:id team)
-                           :member-email (:email member email)
-                           :member-id (:id member)})
-        ptoken    (tokens :generate-predefined
-                          {:iss :profile-identity
-                           :profile-id (:id profile)})]
-
-    (when (contains? cf/flags :log-invitation-tokens)
-      (l/trace :hint "invitation token" :token itoken))
+        token-exp (dt/in-future "168h") ;; 7 days
+        email     (str/lower email)
+        itoken    (tokens/generate sprops
+                                   {:iss :team-invitation
+                                    :exp token-exp
+                                    :profile-id (:id profile)
+                                    :role role
+                                    :team-id (:id team)
+                                    :member-email (:email member email)
+                                    :member-id (:id member)})
+        ptoken    (tokens/generate sprops
+                                   {:iss :profile-identity
+                                    :profile-id (:id profile)
+                                    :exp (dt/in-future {:days 30})})]
 
     (when (and member (not (eml/allow-send-emails? conn member)))
       (ex/raise :type :validation
                 :code :member-is-muted
                 :email email
-                :hint "looks like the profile has reported repeatedly as spam or has permanent bounces"))
+                :hint "the profile has reported repeatedly as spam or has bounces"))
 
     ;; Secondly check if the invited member email is part of the global spam/bounce report.
     (when (eml/has-bounce-reports? conn email)
       (ex/raise :type :validation
                 :code :email-has-permanent-bounces
                 :email email
-                :hint "looks like the email you invite has been repeatedly reported as spam or permanent bounce"))
+                :hint "the email you invite has been repeatedly reported as spam or bounce"))
 
-    (db/exec-one! conn [sql:upsert-team-invitation
-                        (:id team) (str/lower email) (name role) token-exp (name role) token-exp])
+    (when (contains? cf/flags :log-invitation-tokens)
+      (l/trace :hint "invitation token" :token itoken))
 
-    (eml/send! {::eml/conn conn
-                ::eml/factory eml/invite-to-team
-                :public-uri (:public-uri cfg)
-                :to email
-                :invited-by (:fullname profile)
-                :team (:name team)
-                :token itoken
-                :extra-data ptoken})))
+    ;; When we have email verification disabled and invitation user is
+    ;; already present in the database, we proceed to add it to the
+    ;; team as-is, without email roundtrip.
+
+    ;; TODO: if member does not exists and email verification is
+    ;; disabled, we should proceed to create the profile (?)
+    (if (and (not (contains? cf/flags :email-verification))
+             (some? member))
+      (let [params (merge {:team-id (:id team)
+                           :profile-id (:id member)}
+                          (role->params role))]
+
+        ;; Insert the invited member to the team
+        (db/insert! conn :team-profile-rel params {:on-conflict-do-nothing true})
+
+        ;; If profile is not yet verified, mark it as verified because
+        ;; accepting an invitation link serves as verification.
+        (when-not (:is-active member)
+          (db/update! conn :profile
+                      {:is-active true}
+                      {:id (:id member)})))
+      (do
+        (db/exec-one! conn [sql:upsert-team-invitation
+                            (:id team) (str/lower email) (name role)
+                            token-exp (name role) token-exp])
+        (eml/send! {::eml/conn conn
+                    ::eml/factory eml/invite-to-team
+                    :public-uri (:public-uri cfg)
+                    :to email
+                    :invited-by (:fullname profile)
+                    :team (:name team)
+                    :token itoken
+                    :extra-data ptoken})))
+
+    itoken))
 
 ;; --- Mutation: Create Team & Invite Members
 
-(s/def ::emails ::us/set-of-emails)
+(s/def ::emails ::us/set-of-valid-emails)
 (s/def ::create-team-and-invite-members
   (s/and ::create-team (s/keys :req-un [::emails ::role])))
 

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.errors
   "Generic error handling"
@@ -11,6 +11,7 @@
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
    [app.common.pprint :as pp]
+   [app.common.spec :as us]
    [app.config :as cf]
    [app.main.data.messages :as msg]
    [app.main.data.users :as du]
@@ -18,7 +19,9 @@
    [app.util.globals :as glob]
    [app.util.i18n :refer [tr]]
    [app.util.router :as rt]
+   [app.util.storage :refer [storage]]
    [app.util.timers :as ts]
+   [cuerdas.core :as str]
    [potok.core :as ptk]))
 
 (defn on-error
@@ -34,7 +37,7 @@
     :else
     (let [hint (ex-message error)
           msg  (dm/str "Internal Error: " hint)]
-      (ts/schedule (st/emitf (rt/assign-exception error)))
+      (ts/schedule #(st/emit! (rt/assign-exception error)))
 
       (js/console.group msg)
       (ex/ignoring (js/console.error error))
@@ -43,14 +46,24 @@
 ;; Set the main potok error handler
 (reset! st/on-error on-error)
 
+(defmethod ptk/handle-error :default
+  [error]
+  (let [hint (str/concat "Unexpected error: " (:hint error))]
+    (ts/schedule #(st/emit! (rt/assign-exception error)))
+    (js/console.group hint)
+    (ex/ignoring (js/console.error (pr-str error)))
+    (js/console.groupEnd hint)))
+
 ;; We receive a explicit authentication error; this explicitly clears
 ;; all profile data and redirect the user to the login page. This is
 ;; here and not in app.main.errors because of circular dependency.
 (defmethod ptk/handle-error :authentication
   [_]
-  (let [msg (tr "errors.auth.unable-to-login")]
+  (let [msg (tr "errors.auth.unable-to-login")
+        uri (. (. js/document -location) -href)]
     (st/emit! (du/logout {:capture-redirect true}))
-    (ts/schedule 500 (st/emitf (msg/warn msg)))))
+    (ts/schedule 500 #(st/emit! (msg/warn msg)))
+    (ts/schedule 1000 #(swap! storage assoc :redirect-url uri))))
 
 ;; Error that happens on an active business model validation does not
 ;; passes an validation (example: profile can't leave a team). From
@@ -101,7 +114,6 @@
 
     (js/console.groupEnd msg)))
 
-
 ;; Error on parsing an SVG
 ;; TODO: looks unused and deprecated
 (defmethod ptk/handle-error :svg-parser
@@ -129,8 +141,9 @@
         context (dm/fmt "ns: '%'\nname: '%'\nfile: '%:%'"
                         (:ns error)
                         (:name error)
-                        (dm/str cf/public-uri "js/cljs-runtime/" (:file error))
+                        (dm/str @cf/public-uri "js/cljs-runtime/" (:file error))
                         (:line error))]
+
     (ts/schedule
      #(st/emit! (msg/show {:content "Internal error: assertion."
                            :type :error
@@ -139,6 +152,7 @@
     ;; Print to the console some debugging info
     (js/console.group message)
     (js/console.info context)
+    (js/console.log (us/pretty-explain error))
     (js/console.groupEnd message)))
 
 ;; That are special case server-errors that should be treated
@@ -151,7 +165,7 @@
 (defmethod ptk/handle-error ::exceptional-state
   [error]
   (ts/schedule
-   (st/emitf (rt/assign-exception error))))
+   #(st/emit! (rt/assign-exception error))))
 
 ;; This happens when the backed server fails to process the
 ;; request. This can be caused by an internal assertion or any other
@@ -181,14 +195,20 @@
 
 (defn on-unhandled-error
   [error]
-  (if (instance? ExceptionInfo error)
-    (-> error ex-data ptk/handle-error)
-    (let [hint (ex-message error)
-          msg  (dm/str "Unhandled Internal Error: " hint)]
-      (ts/schedule (st/emitf (rt/assign-exception error)))
-      (js/console.group msg)
-      (ex/ignoring (js/console.error error))
-      (js/console.groupEnd msg))))
+  (letfn [(is-ignorable-exception? [cause]
+            (let [message (ex-message cause)]
+              (or (= message "Possible side-effect in debug-evaluate")
+                  (= message "Unexpected end of input") true
+                  (str/starts-with? message "Unexpected token "))))]
+    (if (instance? ExceptionInfo error)
+      (-> error ex-data ptk/handle-error)
+      (when-not (is-ignorable-exception? error)
+        (let [hint (ex-message error)
+              msg  (dm/str "Unhandled Internal Error: " hint)]
+          (ts/schedule #(st/emit! (rt/assign-exception error)))
+          (js/console.group msg)
+          (ex/ignoring (js/console.error error))
+          (js/console.groupEnd msg))))))
 
 (defonce uncaught-error-handler
   (letfn [(on-error [event]

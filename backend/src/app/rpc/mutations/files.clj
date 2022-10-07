@@ -2,22 +2,26 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.rpc.mutations.files
   (:require
+   [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.pages :as cp]
    [app.common.pages.migrations :as pmg]
    [app.common.spec :as us]
+   [app.common.types.file :as ctf]
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
+   [app.loggers.audit :as audit]
    [app.metrics :as mtx]
+   [app.msgbus :as mbus]
    [app.rpc.permissions :as perms]
    [app.rpc.queries.files :as files]
    [app.rpc.queries.projects :as proj]
-   [app.rpc.rlimit :as rlimit]
+   [app.rpc.semaphore :as rsem]
    [app.storage.impl :as simpl]
    [app.util.blob :as blob]
    [app.util.services :as sv]
@@ -26,6 +30,7 @@
    [promesa.core :as p]))
 
 (declare create-file)
+(declare retrieve-team-id)
 
 ;; --- Helpers & Specs
 
@@ -42,13 +47,16 @@
 (s/def ::is-shared ::us/boolean)
 (s/def ::create-file
   (s/keys :req-un [::profile-id ::name ::project-id]
-          :opt-un [::id ::is-shared]))
+          :opt-un [::id ::is-shared ::components-v2]))
 
 (sv/defmethod ::create-file
   [{:keys [pool] :as cfg} {:keys [profile-id project-id] :as params}]
   (db/with-atomic [conn pool]
-    (proj/check-edition-permissions! conn profile-id project-id)
-    (create-file conn params)))
+    (let [team-id (retrieve-team-id conn project-id)]
+      (proj/check-edition-permissions! conn profile-id project-id)
+      (with-meta
+        (create-file conn params)
+        {::audit/props {:team-id team-id}}))))
 
 (defn create-file-role
   [conn {:keys [file-id profile-id role]}]
@@ -58,21 +66,24 @@
          (db/insert! conn :file-profile-rel))))
 
 (defn create-file
-  [conn {:keys [id name project-id is-shared data deleted-at revn]
-         :or {is-shared false
-              revn 0
-              deleted-at nil}
+  [conn {:keys [id name project-id is-shared data revn
+                modified-at deleted-at ignore-sync-until
+                components-v2]
+         :or {is-shared false revn 0}
          :as params}]
   (let [id   (or id (:id data) (uuid/next))
-        data (or data (cp/make-file-data id))
+        data (or data (ctf/make-file-data id components-v2))
         file (db/insert! conn :file
-                         {:id id
-                          :project-id project-id
-                          :name name
-                          :revn revn
-                          :is-shared is-shared
-                          :data (blob/encode data)
-                          :deleted-at deleted-at})]
+                         (d/without-nils
+                          {:id id
+                           :project-id project-id
+                           :name name
+                           :revn revn
+                           :is-shared is-shared
+                           :data (blob/encode data)
+                           :ignore-sync-until ignore-sync-until
+                           :modified-at modified-at
+                           :deleted-at deleted-at}))]
 
     (->> (assoc params :file-id id :role :owner)
          (create-file-role conn))
@@ -102,15 +113,24 @@
 ;; --- Mutation: Set File shared
 
 (declare set-file-shared)
+(declare unlink-files)
+(declare absorb-library)
 
 (s/def ::set-file-shared
   (s/keys :req-un [::profile-id ::id ::is-shared]))
 
 (sv/defmethod ::set-file-shared
-  [{:keys [pool] :as cfg} {:keys [id profile-id] :as params}]
+  [{:keys [pool] :as cfg} {:keys [id profile-id is-shared] :as params}]
   (db/with-atomic [conn pool]
     (files/check-edition-permissions! conn profile-id id)
+    (when-not is-shared
+      (absorb-library conn params)
+      (unlink-files conn params))
     (set-file-shared conn params)))
+
+(defn- unlink-files
+  [conn {:keys [id] :as params}]
+  (db/delete! conn :file-library-rel {:library-file-id id}))
 
 (defn- set-file-shared
   [conn {:keys [id is-shared] :as params}]
@@ -129,6 +149,7 @@
   [{:keys [pool] :as cfg} {:keys [id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (files/check-edition-permissions! conn profile-id id)
+    (absorb-library conn params)
     (mark-file-deleted conn params)))
 
 (defn mark-file-deleted
@@ -138,6 +159,25 @@
               {:id id})
   nil)
 
+(defn absorb-library
+  "Find all files using a shared library, and absorb all library assets
+  into the file local libraries"
+  [conn {:keys [id] :as params}]
+  (let [library (db/get-by-id conn :file id)]
+    (when (:is-shared library)
+      (let [ldata (-> library files/decode-row pmg/migrate-file :data)]
+        (->> (db/query conn :file-library-rel {:library-file-id id})
+             (keep (fn [{:keys [file-id]}]
+                    (some->> (db/get-by-id conn :file file-id {:check-not-found false})
+                             (files/decode-row)
+                             (pmg/migrate-file))))
+             (run! (fn [{:keys [id data revn] :as file}]
+                     (let [data (ctf/absorb-assets data ldata)]
+                       (db/update! conn :file
+                                   {:revn (inc revn)
+                                    :data (blob/encode data)
+                                    :modified-at (dt/now)}
+                                   {:id id})))))))))
 
 ;; --- Mutation: Link file to library
 
@@ -245,7 +285,6 @@
 
 (declare insert-change)
 (declare retrieve-lagged-changes)
-(declare retrieve-team-id)
 (declare send-notifications)
 (declare update-file)
 
@@ -266,23 +305,28 @@
 
 (s/def ::session-id ::us/uuid)
 (s/def ::revn ::us/integer)
+(s/def ::components-v2 ::us/boolean)
 (s/def ::update-file
   (s/and
    (s/keys :req-un [::id ::session-id ::profile-id ::revn]
-           :opt-un [::changes ::changes-with-metadata])
+           :opt-un [::changes ::changes-with-metadata ::components-v2])
    (fn [o]
      (or (contains? o :changes)
          (contains? o :changes-with-metadata)))))
 
 (sv/defmethod ::update-file
-  {::rlimit/permits (cf/get :rlimit-file-update)}
+  {::rsem/queue :update-file}
   [{:keys [pool] :as cfg} {:keys [id profile-id] :as params}]
   (db/with-atomic [conn pool]
     (db/xact-lock! conn id)
-    (let [{:keys [id] :as file} (db/get-by-id conn :file id {:for-key-share true})]
+    (let [{:keys [id] :as file} (db/get-by-id conn :file id {:for-key-share true})
+          team-id (retrieve-team-id conn (:project-id file))]
       (files/check-edition-permissions! conn profile-id id)
-      (update-file (assoc cfg :conn  conn)
-                   (assoc params :file file)))))
+      (with-meta
+        (update-file (assoc cfg :conn  conn)
+                     (assoc params :file file))
+        {::audit/props {:project-id (:project-id file)
+                        :team-id team-id}}))))
 
 (defn- take-snapshot?
   "Defines the rule when file `data` snapshot should be saved."
@@ -302,7 +346,8 @@
       (simpl/del-object backend file))))
 
 (defn- update-file
-  [{:keys [conn metrics] :as cfg} {:keys [file changes changes-with-metadata session-id profile-id] :as params}]
+  [{:keys [conn metrics] :as cfg}
+   {:keys [file changes changes-with-metadata session-id profile-id components-v2] :as params}]
   (when (> (:revn params)
            (:revn file))
 
@@ -327,12 +372,18 @@
                     (update :data (fn [data]
                                     ;; Trace the length of bytes of processed data
                                     (mtx/run! metrics {:id :update-file-bytes-processed :inc (alength data)})
-                                    (-> data
-                                        (blob/decode)
-                                        (assoc :id (:id file))
-                                        (pmg/migrate-data)
-                                        (cp/process-changes changes)
-                                        (blob/encode)))))]
+                                    (cond-> data
+                                      :always
+                                      (-> (blob/decode)
+                                          (assoc :id (:id file))
+                                          (pmg/migrate-data))
+
+                                      components-v2
+                                      (ctf/migrate-to-components-v2)
+
+                                      :always
+                                      (-> (cp/process-changes changes)
+                                          (blob/encode))))))]
     ;; Insert change to the xlog
     (db/insert! conn :file-change
                 {:id (uuid/next)
@@ -389,12 +440,12 @@
 
 (defn- send-notifications
   [{:keys [conn] :as cfg} {:keys [file changes session-id] :as params}]
-  (let [lchanges  (filter library-change? changes)
-        msgbus-fn (:msgbus cfg)]
+  (let [lchanges (filter library-change? changes)
+        msgbus   (:msgbus cfg)]
 
 
     ;; Asynchronously publish message to the msgbus
-    (msgbus-fn :cmd :pub
+    (mbus/pub! msgbus
                :topic (:id file)
                :message {:type :file-change
                          :profile-id (:profile-id params)
@@ -406,7 +457,7 @@
     (when (and (:is-shared file) (seq lchanges))
       (let [team-id (retrieve-team-id conn (:project-id file))]
         ;; Asynchronously publish message to the msgbus
-        (msgbus-fn :cmd :pub
+        (mbus/pub! msgbus
                    :topic team-id
                    :message {:type :library-change
                              :profile-id (:profile-id params)
@@ -487,7 +538,7 @@
           update set data = ?;")
 
 (s/def ::data (s/nilable ::us/string))
-(s/def ::object-id ::us/uuid)
+(s/def ::object-id ::us/string)
 (s/def ::upsert-file-object-thumbnail
   (s/keys :req-un [::profile-id ::file-id ::object-id ::data]))
 
@@ -514,6 +565,8 @@
   (s/keys :req-un [::profile-id ::file-id ::revn ::data ::props]))
 
 (sv/defmethod ::upsert-file-thumbnail
+  "Creates or updates the file thumbnail. Mainly used for paint the
+  grid thumbnails."
   [{:keys [pool] :as cfg} {:keys [profile-id file-id revn data props]}]
   (db/with-atomic [conn pool]
     (files/check-edition-permissions! conn profile-id file-id)

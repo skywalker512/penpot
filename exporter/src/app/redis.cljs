@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.redis
   (:require
@@ -28,7 +28,7 @@
     (.on client "reconnect"
          (fn [ms] (l/warn :hint "reconnecting to redis" :ms ms)))
     (.on client "end"
-         (fn [ms] (l/warn :hint "client ended, no more connections will be attempted")))
+         (fn [] (l/warn :hint "client ended, no more connections will be attempted")))
     client))
 
 (defn init

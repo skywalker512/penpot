@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.components.editable-select
   (:require
@@ -10,11 +10,12 @@
    [app.common.math :as mth]
    [app.common.uuid :as uuid]
    [app.main.ui.components.dropdown :refer [dropdown]]
+   [app.main.ui.components.numeric-input :refer [numeric-input]]
    [app.main.ui.icons :as i]
    [app.util.dom :as dom]
    [app.util.keyboard :as kbd]
    [app.util.timers :as timers]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc editable-select
   [{:keys [value type options class on-change placeholder on-blur] :as params}]
@@ -141,13 +142,19 @@
 
     [:div.editable-select {:class class
                            :ref on-node-load}
-     [:input.input-text {:value (or (some-> @state :current-value value->label) "")
-                         :on-change handle-change-input
-                         :on-key-down handle-key-down
-                         :on-focus handle-focus
-                         :on-blur handle-blur
-                         :placeholder placeholder
-                         :type type}]
+     (if (= type "number")
+       [:> numeric-input {:value (or (some-> @state :current-value value->label) "")
+                          :on-change set-value
+                          :on-focus handle-focus
+                          :on-blur handle-blur
+                          :placeholder placeholder}]
+       [:input.input-text {:value (or (some-> @state :current-value value->label) "")
+                           :on-change handle-change-input
+                           :on-key-down handle-key-down
+                           :on-focus handle-focus
+                           :on-blur handle-blur
+                           :placeholder placeholder
+                           :type type}])
      [:span.dropdown-button {:on-click open-dropdown} i/arrow-down]
 
      [:& dropdown {:show (get @state :is-open? false)

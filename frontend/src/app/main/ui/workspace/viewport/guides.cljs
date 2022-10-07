@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.viewport.guides
   (:require
@@ -10,6 +10,8 @@
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
+   [app.common.pages.helpers :as cph]
+   [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.main.data.workspace :as dw]
    [app.main.refs :as refs]
@@ -19,7 +21,7 @@
    [app.main.ui.formats :as fmt]
    [app.main.ui.workspace.viewport.rules :as rules]
    [app.util.dom :as dom]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (def guide-width 1)
 (def guide-opacity 0.7)
@@ -283,12 +285,16 @@
 
         pos (+ (or (:new-position @state) (:position guide)) (get move-vec axis))
         guide-width (/ guide-width zoom)
-        guide-pill-corner-radius (/ guide-pill-corner-radius zoom)]
+        guide-pill-corner-radius (/ guide-pill-corner-radius zoom)
+
+        frame-guide-outside?
+        (and (some? frame)
+             (not (is-guide-inside-frame? (assoc guide :position pos) frame)))]
 
     (when (or (nil? frame)
-              (is-guide-inside-frame? (assoc guide :position pos) frame)
-              (:hover @state true))
-      [:g.guide-area
+              (and (cph/root-frame? frame)
+                   (not (ctst/rotated-frame? frame))))
+      [:g.guide-area {:opacity (when frame-guide-outside? 0)}
        (when-not disabled-guides?
          (let [{:keys [x y width height]} (guide-area-axis pos vbox zoom frame axis)]
            [:rect {:x x
@@ -296,7 +302,7 @@
                    :width width
                    :height height
                    :style {:fill "none"
-                           :pointer-events "fill"
+                           :pointer-events (if frame-guide-outside? "none" "fill")
                            :cursor (if (= axis :x) (cur/resize-ew 0) (cur/resize-ns 0))}
                    :on-pointer-enter on-pointer-enter
                    :on-pointer-leave on-pointer-leave

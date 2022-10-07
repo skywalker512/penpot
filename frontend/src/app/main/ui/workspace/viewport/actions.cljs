@@ -2,30 +2,35 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.viewport.actions
   (:require
    [app.common.geom.point :as gpt]
    [app.common.math :as mth]
+   [app.common.pages.helpers :as cph]
    [app.common.uuid :as uuid]
    [app.config :as cfg]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.drawing :as dd]
    [app.main.data.workspace.libraries :as dwl]
+   [app.main.data.workspace.media :as dwm]
    [app.main.data.workspace.path :as dwdp]
+   [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.streams :as ms]
    [app.main.ui.workspace.viewport.utils :as utils]
    [app.util.dom :as dom]
    [app.util.dom.dnd :as dnd]
+   [app.util.dom.normalize-wheel :as nw]
    [app.util.keyboard :as kbd]
    [app.util.object :as obj]
    [app.util.timers :as timers]
    [beicon.core :as rx]
    [cuerdas.core :as str]
-   [rumext.alpha :as mf])
-  (:import goog.events.WheelEvent))
+   [rumext.v2 :as mf]))
+
+(def scale-per-pixel -0.0057)
 
 (defn on-mouse-down
   [{:keys [id blocked hidden type]} selected edition drawing-tool text-editing?
@@ -47,10 +52,7 @@
              mod?   (kbd/mod? event)
 
              left-click?   (and (not panning) (= 1 (.-which event)))
-             middle-click? (and (not panning) (= 2 (.-which event)))
-
-             frame? (= :frame type)
-             selected? (contains? selected id)]
+             middle-click? (and (not panning) (= 2 (.-which event)))]
 
          (cond
            middle-click?
@@ -93,7 +95,7 @@
                  drawing-tool
                  (st/emit! (dd/start-drawing drawing-tool))
 
-                 (or (not id) (and frame? (not selected?)) mod?)
+                 (or (not id) mod?)
                  (st/emit! (dw/handle-area-selection shift? mod?))
 
                  (not drawing-tool)
@@ -123,10 +125,11 @@
    (mf/deps selected)
    (fn [event id]
      (let [shift? (kbd/shift? event)
-           selected? (contains? selected id)]
+           selected? (contains? selected id)
+           selected-drawtool (deref refs/selected-drawing-tool)]
        (st/emit! (when (or shift? (not selected?))
                    (dw/select-shape id shift?))
-                 (when (not shift?)
+                 (when (and (nil? selected-drawtool) (not shift?))
                    (dw/start-move-selected)))))))
 
 (defn on-frame-enter
@@ -153,13 +156,10 @@
              shift? (kbd/shift? event)
              alt? (kbd/alt? event)
              meta? (kbd/meta? event)
-             mod? (kbd/mod? event)
-             hovering? (some? @hover)
-             frame? (= :frame (:type @hover))]
+             hovering? (some? @hover)]
          (st/emit! (ms/->MouseEvent :click ctrl? shift? alt? meta?))
 
          (when (and hovering?
-                    (or (not frame?) mod?)
                     (not @space?)
                     (not edition)
                     (not drawing-path?)
@@ -168,6 +168,7 @@
 
 (defn on-double-click
   [hover hover-ids drawing-path? objects edition]
+
   (mf/use-callback
    (mf/deps @hover @hover-ids drawing-path? edition)
    (fn [event]
@@ -177,30 +178,28 @@
            alt? (kbd/alt? event)
            meta? (kbd/meta? event)
 
-           {:keys [id type] :as shape} @hover
+           {:keys [id type] :as shape} (or @hover (get objects (first @hover-ids)))
 
-           frame? (= :frame type)
-           group? (= :group type)]
+           editable? (contains? #{:text :rect :path :image :circle} type)]
 
        (st/emit! (ms/->MouseEvent :double-click ctrl? shift? alt? meta?))
 
        ;; Emit asynchronously so the double click to exit shapes won't break
        (timers/schedule
-        #(when (and (not drawing-path?) shape)
-           (cond
-             frame?
-             (st/emit! (dw/select-shape id shift?))
+        (fn []
+          (when (and (not drawing-path?) shape)
+            (cond
+              (and editable? (not= id edition))
+              (st/emit! (dw/select-shape id)
+                        (dw/start-editing-selected))
 
-             (and group? (> (count @hover-ids) 1))
-             (let [selected (get objects (second @hover-ids))]
-               (reset! hover selected)
-               (reset! hover-ids (into [] (rest @hover-ids)))
-
-               (st/emit! (dw/select-shape (:id selected))))
-
-             (not= id edition)
-             (st/emit! (dw/select-shape id)
-                       (dw/start-editing-selected)))))))))
+              :else
+              (let [;; We only get inside childrens of the hovering shape
+                    hover-ids (->> @hover-ids (filter (partial cph/is-child? objects id)))
+                    selected (get objects (first hover-ids))]
+                (when (some? selected)
+                  (reset! hover selected)
+                  (st/emit! (dw/select-shape (:id selected)))))))))))))
 
 (defn on-context-menu
   [hover hover-ids]
@@ -376,32 +375,24 @@
          (dom/stop-propagation event)
          (let [pt     (->> (dom/get-client-position event)
                            (utils/translate-point-to-viewport viewport zoom))
+
+               norm-event ^js (nw/normalize-wheel event)
                ctrl?  (kbd/ctrl? event)
+               delta-y (.-pixelY norm-event)
+               delta-x (.-pixelX norm-event)]
 
-               delta-mode (.-deltaMode ^js event)
-
-               unit (cond
-                      (= delta-mode WheelEvent.DeltaMode.PIXEL) 1
-                      (= delta-mode WheelEvent.DeltaMode.LINE) 16
-                      (= delta-mode WheelEvent.DeltaMode.PAGE) 100)
-
-               delta-y (-> (.-deltaY ^js event)
-                           (* unit)
-                           (/ zoom))
-
-               delta-x (-> (.-deltaX ^js event)
-                           (* unit)
-                           (/ zoom))]
            (if (or ctrl? mod?)
-             (let [delta (* -1 (+ delta-y delta-x))
-                   scale (-> (+ 1 (/ delta 100)) (mth/clamp 0.77 1.3))]
+             (let [delta-zoom (+ delta-y delta-x)
+                   scale (+ 1 (mth/abs (* scale-per-pixel delta-zoom)))
+                   scale (if (pos? delta-zoom) (/ 1 scale) scale)]
                (st/emit! (dw/set-zoom pt scale)))
+
              (if (and (not (cfg/check-platform? :macos))
                       ;; macos sends delta-x automatically, don't need to do it
                       (kbd/shift? event))
-               (st/emit! (dw/update-viewport-position {:x #(+ % delta-y)}))
-               (st/emit! (dw/update-viewport-position {:x #(+ % delta-x)
-                                                       :y #(+ % delta-y)}))))))))))
+               (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-y zoom))}))
+               (st/emit! (dw/update-viewport-position {:x #(+ % (/ delta-x zoom))
+                                                       :y #(+ % (/ delta-y zoom))}))))))))))
 
 (defn on-drag-enter []
   (mf/use-callback
@@ -423,82 +414,77 @@
                (dnd/has-type? e "text/asset-id"))
        (dom/prevent-default e)))))
 
-(defn on-image-uploaded []
-  (mf/use-callback
-   (fn [image position]
-     (st/emit! (dw/image-uploaded image position)))))
+(defn on-drop
+  [file viewport-ref zoom]
+  (mf/use-fn
+   (mf/deps zoom)
+   (fn [event]
+     (dom/prevent-default event)
+     (let [point (gpt/point (.-clientX event) (.-clientY event))
+           viewport (mf/ref-val viewport-ref)
+           viewport-coord (utils/translate-point-to-viewport viewport zoom point)
+           asset-id     (-> (dnd/get-data event "text/asset-id") uuid/uuid)
+           asset-name   (dnd/get-data event "text/asset-name")
+           asset-type   (dnd/get-data event "text/asset-type")]
+       (cond
+         (dnd/has-type? event "penpot/shape")
+         (let [shape (dnd/get-data event "penpot/shape")
+               final-x (- (:x viewport-coord) (/ (:width shape) 2))
+               final-y (- (:y viewport-coord) (/ (:height shape) 2))]
+           (st/emit! (dw/add-shape (-> shape
+                                       (assoc :id (uuid/next))
+                                       (assoc :x final-x)
+                                       (assoc :y final-y)))))
 
-(defn on-drop [file viewport-ref zoom]
-  (let [on-image-uploaded (on-image-uploaded)]
-    (mf/use-callback
-     (mf/deps zoom)
-     (fn [event]
-       (dom/prevent-default event)
-       (let [point (gpt/point (.-clientX event) (.-clientY event))
-             viewport (mf/ref-val viewport-ref)
-             viewport-coord (utils/translate-point-to-viewport viewport zoom point)
-             asset-id     (-> (dnd/get-data event "text/asset-id") uuid/uuid)
-             asset-name   (dnd/get-data event "text/asset-name")
-             asset-type   (dnd/get-data event "text/asset-type")]
-         (cond
-           (dnd/has-type? event "penpot/shape")
-           (let [shape (dnd/get-data event "penpot/shape")
-                 final-x (- (:x viewport-coord) (/ (:width shape) 2))
-                 final-y (- (:y viewport-coord) (/ (:height shape) 2))]
-             (st/emit! (dw/add-shape (-> shape
-                                         (assoc :id (uuid/next))
-                                         (assoc :x final-x)
-                                         (assoc :y final-y)))))
+         (dnd/has-type? event "penpot/component")
+         (let [{:keys [component file-id]} (dnd/get-data event "penpot/component")
+               shape (get-in component [:objects (:id component)])
+               final-x (- (:x viewport-coord) (/ (:width shape) 2))
+               final-y (- (:y viewport-coord) (/ (:height shape) 2))]
+           (st/emit! (dwl/instantiate-component file-id
+                                                (:id component)
+                                                (gpt/point final-x final-y))))
 
-           (dnd/has-type? event "penpot/component")
-           (let [{:keys [component file-id]} (dnd/get-data event "penpot/component")
-                 shape (get-in component [:objects (:id component)])
-                 final-x (- (:x viewport-coord) (/ (:width shape) 2))
-                 final-y (- (:y viewport-coord) (/ (:height shape) 2))]
-             (st/emit! (dwl/instantiate-component file-id
-                                                  (:id component)
-                                                  (gpt/point final-x final-y))))
+         ;; Will trigger when the user drags an image from a browser to the viewport
+         (dnd/has-type? event "text/uri-list")
+         (let [data  (dnd/get-data event "text/uri-list")
+               lines (str/lines data)
+               uris  (filter #(and (not (str/blank? %))
+                                   (not (str/starts-with? % "#")))
+                             lines)
+               params {:file-id (:id file)
+                       :position viewport-coord
+                       :uris uris}]
+           (st/emit! (dwm/upload-media-workspace params)))
 
-           ;; Will trigger when the user drags an image from a browser to the viewport
-           (dnd/has-type? event "text/uri-list")
-           (let [data  (dnd/get-data event "text/uri-list")
-                 lines (str/lines data)
-                 uris  (filter #(and (not (str/blank? %))
-                                     (not (str/starts-with? % "#")))
-                               lines)
-                 params {:file-id (:id file)
-                         :position viewport-coord
-                         :uris uris}]
-             (st/emit! (dw/upload-media-workspace params)))
+         ;; Will trigger when the user drags an SVG asset from the assets panel
+         (and (dnd/has-type? event "text/asset-id") (= asset-type "image/svg+xml"))
+         (let [path (cfg/resolve-file-media {:id asset-id})
+               params {:file-id (:id file)
+                       :position viewport-coord
+                       :uris [path]
+                       :name asset-name
+                       :mtype asset-type}]
+           (st/emit! (dwm/upload-media-workspace params)))
 
-           ;; Will trigger when the user drags an SVG asset from the assets panel
-           (and (dnd/has-type? event "text/asset-id") (= asset-type "image/svg+xml"))
-           (let [path (cfg/resolve-file-media {:id asset-id})
-                 params {:file-id (:id file)
-                         :position viewport-coord
-                         :uris [path]
-                         :name asset-name
-                         :mtype asset-type}]
-             (st/emit! (dw/upload-media-workspace params)))
+         ;; Will trigger when the user drags an image from the assets SVG
+         (dnd/has-type? event "text/asset-id")
+         (let [params {:file-id (:id file)
+                       :object-id asset-id
+                       :name asset-name}]
+           (st/emit! (dwm/clone-media-object
+                      (with-meta params
+                        {:on-success #(st/emit! (dwm/image-uploaded % viewport-coord))}))))
 
-           ;; Will trigger when the user drags an image from the assets SVG
-           (dnd/has-type? event "text/asset-id")
-           (let [params {:file-id (:id file)
-                         :object-id asset-id
-                         :name asset-name}]
-             (st/emit! (dw/clone-media-object
-                        (with-meta params
-                          {:on-success #(on-image-uploaded % viewport-coord)}))))
-
-           ;; Will trigger when the user drags a file from their file explorer into the viewport
-           ;; Or the user pastes an image
-           ;; Or the user uploads an image using the image tool
-           :else
-           (let [files  (dnd/get-files event)
-                 params {:file-id (:id file)
-                         :position viewport-coord
-                         :blobs (seq files)}]
-             (st/emit! (dw/upload-media-workspace params)))))))))
+         ;; Will trigger when the user drags a file from their file explorer into the viewport
+         ;; Or the user pastes an image
+         ;; Or the user uploads an image using the image tool
+         :else
+         (let [files  (dnd/get-files event)
+               params {:file-id (:id file)
+                       :position viewport-coord
+                       :blobs (seq files)}]
+           (st/emit! (dwm/upload-media-workspace params))))))))
 
 (defn on-paste [disable-paste in-viewport?]
   (mf/use-callback

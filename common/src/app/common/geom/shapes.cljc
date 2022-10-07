@@ -6,6 +6,7 @@
 
 (ns app.common.geom.shapes
   (:require
+   [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes.bool :as gsb]
@@ -13,6 +14,8 @@
    [app.common.geom.shapes.constraints :as gct]
    [app.common.geom.shapes.corners :as gsc]
    [app.common.geom.shapes.intersect :as gin]
+   [app.common.geom.shapes.layout :as gcl]
+   [app.common.geom.shapes.modifiers :as gsm]
    [app.common.geom.shapes.path :as gsp]
    [app.common.geom.shapes.rect :as gpr]
    [app.common.geom.shapes.transforms :as gtr]
@@ -37,6 +40,24 @@
   (gtr/move shape (gpt/point x y))  )
 
 ;; --- Helpers
+
+(defn bounding-box
+  "Returns a rect that wraps the shape after all transformations applied."
+  [shape]
+  ; TODO: perhaps we need to store this calculation in a shape attribute
+  (gpr/points->rect (:points shape)))
+
+(defn left-bound
+  "Returns the lowest x coord of the shape BEFORE applying transformations."
+  ; TODO: perhaps some day we want after transformations, but for the
+  ;       moment it's enough as is now.
+  [shape]
+  (or (:x shape) (:x (:selrect shape)))) ; Paths don't have :x attribute
+
+(defn top-bound
+  "Returns the lowest y coord of the shape BEFORE applying transformations."
+  [shape]
+  (or (:y shape) (:y (:selrect shape)))) ; Paths don't have :y attribute
 
 (defn fully-contained?
   "Checks if one rect is fully inside the other"
@@ -89,13 +110,37 @@
 (defn distance-shapes [shape other]
   (distance-selrect (:selrect shape) (:selrect other)))
 
-(defn shape-stroke-margin
-  [shape stroke-width]
-  (if (= (:type shape) :path)
-    ;; TODO: Calculate with the stroke offset (not implemented yet
-    (mth/sqrt (* 2 stroke-width stroke-width))
-    (- (mth/sqrt (* 2 stroke-width stroke-width)) stroke-width)))
+(defn close-attrs?
+  "Compares two shapes attributes to see if they are equal or almost
+  equal (in case of numeric). Takes into account attributes that are
+  data structures with numbers inside."
+  ([attr val1 val2]
+   (close-attrs? attr val1 val2 mth/float-equal-precision))
 
+  ([attr val1 val2 precision]
+   (let [close-val? (fn [num1 num2]
+                     (when (and (number? num1) (number? num2))
+                       (< (mth/abs (- num1 num2)) precision)))]
+     (cond
+       (and (number? val1) (number? val2))
+       (close-val? val1 val2)
+
+       (= attr :selrect)
+       (every? #(close-val? (get val1 %) (get val2 %))
+               [:x :y :x1 :y1 :x2 :y2 :width :height])
+
+       (= attr :points)
+       (every? #(and (close-val? (:x (first %)) (:x (second %)))
+                     (close-val? (:y (first %)) (:y (second %))))
+               (d/zip val1 val2))
+
+       (= attr :position-data)
+       (every? #(and (close-val? (:x (first %)) (:x (second %)))
+                     (close-val? (:y (first %)) (:y (second %))))
+               (d/zip val1 val2))
+
+       :else
+       (= val1 val2)))))
 
 ;; EXPORTS
 (dm/export gco/center-shape)
@@ -119,6 +164,7 @@
 (dm/export gtr/move)
 (dm/export gtr/absolute-move)
 (dm/export gtr/transform-matrix)
+(dm/export gtr/transform-str)
 (dm/export gtr/inverse-transform-matrix)
 (dm/export gtr/transform-point-center)
 (dm/export gtr/transform-rect)
@@ -126,17 +172,24 @@
 (dm/export gtr/update-group-selrect)
 (dm/export gtr/update-mask-selrect)
 (dm/export gtr/resize-modifiers)
+(dm/export gtr/change-orientation-modifiers)
 (dm/export gtr/rotation-modifiers)
 (dm/export gtr/merge-modifiers)
 (dm/export gtr/transform-shape)
 (dm/export gtr/transform-selrect)
+(dm/export gtr/transform-selrect-matrix)
 (dm/export gtr/transform-bounds)
 (dm/export gtr/modifiers->transform)
 (dm/export gtr/empty-modifiers?)
 (dm/export gtr/move-position-data)
+(dm/export gtr/apply-transform)
 
 ;; Constratins
 (dm/export gct/calc-child-modifiers)
+
+;; Layout
+(dm/export gcl/calc-layout-data)
+(dm/export gcl/calc-layout-modifiers)
 
 ;; PATHS
 (dm/export gsp/content->selrect)
@@ -160,3 +213,6 @@
 ;; Corners
 (dm/export gsc/shape-corners-1)
 (dm/export gsc/shape-corners-4)
+
+;; Modifiers
+(dm/export gsm/set-objects-modifiers)

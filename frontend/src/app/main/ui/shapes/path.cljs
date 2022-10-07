@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.path
   (:require
@@ -11,7 +11,7 @@
    [app.main.ui.shapes.custom-stroke :refer [shape-custom-strokes]]
    [app.util.object :as obj]
    [app.util.path.format :as upf]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc path-shape
   {::mf/wrap-props false}
@@ -22,7 +22,7 @@
                   (try
                     (upf/format-path content)
                     (catch :default e
-                      (log/error :hint "unexpected error on formating path"
+                      (log/error :hint "unexpected error on formatting path"
                                  :shape-name (:name shape)
                                  :shape-id (:id shape)
                                  :cause e)

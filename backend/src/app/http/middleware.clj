@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http.middleware
   (:require
@@ -12,6 +12,8 @@
    [app.config :as cf]
    [app.util.json :as json]
    [cuerdas.core :as str]
+   [promesa.core :as p]
+   [promesa.exec :as px]
    [yetti.adapter :as yt]
    [yetti.middleware :as ymw]
    [yetti.request :as yrq]
@@ -35,14 +37,14 @@
             (let [header (yrq/get-header request "content-type")]
               (cond
                 (str/starts-with? header "application/transit+json")
-                (with-open [is (-> request yrq/body yrq/body-stream)]
+                (with-open [is (yrq/body request)]
                   (let [params (t/read! (t/reader is))]
                     (-> request
                         (assoc :body-params params)
                         (update :params merge params))))
 
                 (str/starts-with? header "application/json")
-                (with-open [is (-> request yrq/body yrq/body-stream)]
+                (with-open [is (yrq/body request)]
                   (let [params (json/read is)]
                     (-> request
                         (assoc :body-params params)
@@ -113,7 +115,7 @@
 
           (format-response [response request]
             (let [body (yrs/body response)]
-              (if (coll? body)
+              (if (or (boolean? body) (coll? body))
                 (let [qs   (yrq/query request)
                       opts (if (or (contains? cf/flags :transit-readable-response)
                                    (str/includes? qs "transit_verbose"))
@@ -192,3 +194,23 @@
 (def restrict-methods
   {:name ::restrict-methods
    :compile compile-restrict-methods})
+
+(def with-dispatch
+  {:name ::with-dispatch
+   :compile
+   (fn [& _]
+     (fn [handler executor]
+       (fn [request respond raise]
+         (-> (px/submit! executor #(handler request))
+             (p/bind p/wrap)
+             (p/then respond)
+             (p/catch raise)))))})
+
+(def with-config
+  {:name ::with-config
+   :compile
+   (fn [& _]
+     (fn [handler config]
+       (fn
+         ([request] (handler config request))
+         ([request respond raise] (handler config request respond raise)))))})

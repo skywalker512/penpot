@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.renderer
   "Common renderer interface."
@@ -20,7 +20,6 @@
 (s/def ::file-id ::us/uuid)
 (s/def ::scale ::us/number)
 (s/def ::token ::us/string)
-(s/def ::uri ::us/uri)
 (s/def ::filename ::us/string)
 
 (s/def ::object
@@ -30,10 +29,9 @@
   (s/coll-of ::object :min-count 1))
 
 (s/def ::render-params
-  (s/keys :req-un [::file-id ::page-id ::scale ::token ::type ::objects]
-          :opt-un [::uri]))
+  (s/keys :req-un [::file-id ::page-id ::scale ::token ::type ::objects]))
 
-(defn- render
+(defn render
   [{:keys [type] :as params} on-object]
   (us/verify ::render-params params)
   (us/verify fn? on-object)

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.loggers.audit
   "Services related to the user activity (audit log)."
@@ -15,6 +15,7 @@
    [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.db :as db]
+   [app.tokens :as tokens]
    [app.util.async :as aa]
    [app.util.time :as dt]
    [app.worker :as wrk]
@@ -32,7 +33,7 @@
   [request]
   (or (some-> (yrq/get-header request "x-forwarded-for") (str/split ",") first)
       (yrq/get-header request "x-real-ip")
-      (yrq/remote-addr request)))
+      (some-> (yrq/remote-addr request) str)))
 
 (defn extract-utm-params
   "Extracts additional data from params and namespace them under
@@ -51,7 +52,7 @@
 (defn profile->props
   [profile]
   (-> profile
-      (select-keys [:is-active :is-muted :auth-backend :email :default-team-id :default-project-id :fullname :lang])
+      (select-keys [:id :is-active :is-muted :auth-backend :email :default-team-id :default-project-id :fullname :lang])
       (merge (:props profile))
       (d/without-nils)))
 
@@ -124,7 +125,7 @@
                   (l/error :hint "error on persist-events" :cause cause))))]
 
       (fn [request respond _]
-        ;; Fire and forget, log error in case of errro
+        ;; Fire and forget, log error in case of error
         (-> (px/submit! executor #(handler request))
             (p/catch handle-error))
 
@@ -237,10 +238,10 @@
 
 (s/def ::http-client fn?)
 (s/def ::uri ::us/string)
-(s/def ::tokens fn?)
+(s/def ::sprops map?)
 
 (defmethod ig/pre-init-spec ::archive-task [_]
-  (s/keys :req-un [::db/pool ::tokens ::http-client]
+  (s/keys :req-un [::db/pool ::sprops ::http-client]
           :opt-un [::uri]))
 
 (defmethod ig/init-key ::archive-task
@@ -257,12 +258,16 @@
         (ex/raise :type :internal
                   :code :task-not-configured
                   :hint "archive task not configured, missing uri"))
+
       (when enabled
-        (loop []
-          (let [res (archive-events cfg)]
-            (when (= res :continue)
-              (aa/thread-sleep 200)
-              (recur))))))))
+        (loop [total 0]
+          (let [n (archive-events cfg)]
+            (if n
+              (do
+                (aa/thread-sleep 100)
+                (recur (+ total n)))
+              (when (pos? total)
+                (l/trace :hint "events chunk archived" :num total)))))))))
 
 (def sql:retrieve-batch-of-audit-log
   "select * from audit_log
@@ -272,7 +277,7 @@
       for update skip locked;")
 
 (defn archive-events
-  [{:keys [pool uri tokens http-client] :as cfg}]
+  [{:keys [pool uri sprops http-client] :as cfg}]
   (letfn [(decode-row [{:keys [props ip-addr context] :as row}]
             (cond-> row
               (db/pgobject? props)
@@ -296,9 +301,9 @@
                               :context]))
 
           (send [events]
-            (let [token   (tokens :generate {:iss "authentication"
-                                             :iat (dt/now)
-                                             :uid uuid/zero})
+            (let [token   (tokens/generate sprops {:iss "authentication"
+                                                   :iat (dt/now)
+                                                   :uid uuid/zero})
                   body    (t/encode {:events events})
                   headers {"content-type" "application/transit+json"
                            "origin" (cf/get :public-uri)
@@ -332,7 +337,7 @@
           (l/debug :action "archive-events" :uri uri :events (count events))
           (when (send events)
             (mark-as-archived conn rows)
-            :continue))))))
+            (count events)))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; GC Task
@@ -340,23 +345,18 @@
 
 (def sql:clean-archived
   "delete from audit_log
-    where archived_at is not null
-      and archived_at < now() - ?::interval")
+    where archived_at is not null")
 
 (defn- clean-archived
-  [{:keys [pool max-age]}]
-  (let [interval (db/interval max-age)
-        result   (db/exec-one! pool [sql:clean-archived interval])
-        result   (:next.jdbc/update-count result)]
-    (l/debug :action "clean archived audit log" :removed result)
+  [{:keys [pool]}]
+  (let [result (db/exec-one! pool [sql:clean-archived])
+        result (:next.jdbc/update-count result)]
+    (l/debug :hint "delete archived audit log entries" :deleted result)
     result))
 
-(s/def ::max-age ::cf/audit-log-gc-max-age)
-
 (defmethod ig/pre-init-spec ::gc-task [_]
-  (s/keys :req-un [::db/pool ::max-age]))
+  (s/keys :req-un [::db/pool]))
 
 (defmethod ig/init-key ::gc-task
   [_ cfg]
-  (fn [_]
-    (clean-archived cfg)))
+  (partial clean-archived cfg))

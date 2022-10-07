@@ -2,38 +2,43 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.test-helpers
   (:require
    [app.common.data :as d]
    [app.common.flags :as flags]
    [app.common.pages :as cp]
+   [app.common.pprint :as pp]
    [app.common.spec :as us]
    [app.common.uuid :as uuid]
-   [app.common.pprint :as pp]
    [app.config :as cf]
    [app.db :as db]
    [app.main :as main]
    [app.media]
    [app.migrations]
+   [app.rpc.commands.auth :as cmd.auth]
    [app.rpc.mutations.files :as files]
    [app.rpc.mutations.profile :as profile]
    [app.rpc.mutations.projects :as projects]
    [app.rpc.mutations.teams :as teams]
    [app.util.blob :as blob]
+   [app.util.services :as sv]
    [app.util.time :as dt]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
+   [clojure.test :as t]
    [cuerdas.core :as str]
    [datoteka.core :as fs]
    [environ.core :refer [env]]
    [expound.alpha :as expound]
    [integrant.core :as ig]
    [mockery.core :as mk]
-   [yetti.request :as yrq]
-   [promesa.core :as p])
-  (:import org.postgresql.ds.PGSimpleDataSource))
+   [promesa.core :as p]
+   [yetti.request :as yrq])
+  (:import
+   java.util.UUID
+   org.postgresql.ds.PGSimpleDataSource))
 
 (def ^:dynamic *system* nil)
 (def ^:dynamic *pool* nil)
@@ -47,22 +52,35 @@
        (merge cf/defaults defaults)
        (us/conform ::cf/config)))
 
+(def default-flags
+  [:enable-secure-session-cookies
+   :enable-email-verification
+   :enable-smtp])
+
 (defn state-init
   [next]
-  (let [config (-> main/system-config
-                   (assoc-in [:app.msgbus/msgbus :redis-uri] (:redis-uri config))
+  (let [templates [{:id "test"
+                    :name "test"
+                    :file-uri "test"
+                    :thumbnail-uri "test"
+                    :path (-> "app/test_files/template.penpot" io/resource fs/path)}]
+        system (-> (merge main/system-config main/worker-config)
+                   (assoc-in [:app.redis/redis :uri] (:redis-uri config))
                    (assoc-in [:app.db/pool :uri] (:database-uri config))
                    (assoc-in [:app.db/pool :username] (:database-username config))
                    (assoc-in [:app.db/pool :password] (:database-password config))
+                   (assoc-in [:app.rpc/methods :templates] templates)
                    (dissoc :app.srepl/server
                            :app.http/server
                            :app.http/router
                            :app.http.awsns/handler
                            :app.http.session/updater
-                           :app.http.oauth/google
-                           :app.http.oauth/gitlab
-                           :app.http.oauth/github
-                           :app.http.oauth/all
+                           :app.auth.oidc/google-provider
+                           :app.auth.oidc/gitlab-provider
+                           :app.auth.oidc/github-provider
+                           :app.auth.oidc/generic-provider
+                           :app.setup/builtin-templates
+                           :app.auth.oidc/routes
                            :app.worker/executors-monitor
                            :app.http.oauth/handler
                            :app.notifications/handler
@@ -72,19 +90,17 @@
                            :app.loggers.database/reporter
                            :app.loggers.zmq/receiver
                            :app.worker/cron
-                           :app.worker/worker)
-                   (d/deep-merge
-                    {:app.tasks.file-gc/handler {:max-age (dt/duration 300)}}))
-        _      (ig/load-namespaces config)
-        system (-> (ig/prep config)
+                           :app.worker/worker))
+        _      (ig/load-namespaces system)
+        system (-> (ig/prep system)
                    (ig/init))]
     (try
       (binding [*system* system
                 *pool*   (:app.db/pool system)]
-        (mk/with-mocks [mock1 {:target 'app.rpc.mutations.profile/derive-password
-                               :return identity}
-                        mock2 {:target 'app.rpc.mutations.profile/verify-password
-                               :return (fn [a b] {:valid (= a b)})}]
+        (with-redefs [app.config/flags (flags/parse flags/default default-flags (:flags config))
+                      app.config/config config
+                      app.rpc.commands.auth/derive-password identity
+                      app.rpc.commands.auth/verify-password (fn [a b] {:valid (= a b)})]
           (next)))
       (finally
         (ig/halt! system)))))
@@ -125,8 +141,8 @@
 
 (defn mk-uuid
   [prefix & args]
-  (uuid/namespaced uuid/zero (apply str prefix args)))
-
+  (UUID/nameUUIDFromBytes (-> (apply str prefix args)
+                              (.getBytes "UTF-8"))))
 ;; --- FACTORIES
 
 (defn create-profile*
@@ -140,8 +156,8 @@
                         :is-demo false}
                        params)]
      (->> params
-          (#'profile/create-profile conn)
-          (#'profile/create-profile-relations conn)))))
+          (cmd.auth/create-profile conn)
+          (cmd.auth/create-profile-relations conn)))))
 
 (defn create-project*
   ([i params] (create-project* *pool* i params))
@@ -161,7 +177,8 @@
    (us/assert uuid? project-id)
    (#'files/create-file conn
                         (merge {:id (mk-uuid "file" i)
-                                :name (str "file" i)}
+                                :name (str "file" i)
+                                :components-v2 true}
                                params))))
 
 (defn mark-file-deleted*
@@ -246,6 +263,7 @@
                            :metrics metrics}
                           {:file file
                            :revn revn
+                           :components-v2 true
                            :changes changes
                            :session-id session-id
                            :profile-id profile-id}))))
@@ -261,23 +279,37 @@
 (defmacro try-on!
   [expr]
   `(try
-     {:error nil
-      :result (deref ~expr)}
+     (let [result# (deref ~expr)
+           result# (cond-> result# (sv/wrapped? result#) deref)]
+       {:error nil
+        :result result#})
      (catch Exception e#
        {:error (handle-error e#)
         :result nil})))
 
+(defn command!
+  [{:keys [::type] :as data}]
+  (let [method-fn (get-in *system* [:app.rpc/methods :commands type])]
+    ;; (app.common.pprint/pprint (:app.rpc/methods *system*))
+    (try-on! (method-fn (dissoc data ::type)))))
+
 (defn mutation!
   [{:keys [::type] :as data}]
-  (let [method-fn (get-in *system* [:app.rpc/rpc :methods :mutation type])]
-    (try-on!
-     (method-fn (dissoc data ::type)))))
+  (let [method-fn (get-in *system* [:app.rpc/methods :mutations type])]
+    (try-on! (method-fn (dissoc data ::type)))))
 
 (defn query!
   [{:keys [::type] :as data}]
-  (let [method-fn (get-in *system* [:app.rpc/rpc :methods :query type])]
-    (try-on!
-     (method-fn (dissoc data ::type)))))
+  (let [method-fn (get-in *system* [:app.rpc/methods :queries type])]
+    (try-on! (method-fn (dissoc data ::type)))))
+
+(defn run-task!
+  ([name]
+   (run-task! name {}))
+  ([name params]
+   (let [tasks (:app.worker/registry *system*)]
+     (let [task-fn (get tasks name)]
+       (task-fn params)))))
 
 ;; --- UTILS
 
@@ -338,6 +370,10 @@
   (let [data (ex-data e)]
     (= code (:code data))))
 
+(defn success?
+  [{:keys [result error]}]
+  (nil? error))
+
 (defn tempfile
   [source]
   (let [rsc (io/resource source)
@@ -345,29 +381,6 @@
     (io/copy (io/file rsc)
              (io/file tmp))
     tmp))
-
-(defn sleep
-  [ms]
-  (Thread/sleep ms))
-
-(defn mock-config-get-with
-  "Helper for mock app.config/get"
-  [data]
-  (fn
-    ([key]
-     (get data key (get cf/config key)))
-    ([key default]
-     (get data key (get cf/config key default)))))
-
-
-(defmacro with-mocks
-  [rebinds & body]
-  `(with-redefs-fn ~rebinds
-     (fn [] ~@body)))
-
-(defn reset-mock!
-  [m]
-  (reset! m @(mk/make-mock {})))
 
 (defn pause
   []
@@ -388,3 +401,18 @@
   [& params]
   (apply db/query *pool* params))
 
+(defn sleep
+  [ms-or-duration]
+  (Thread/sleep (inst-ms (dt/duration ms-or-duration))))
+
+(defn config-get-mock
+  [data]
+  (fn
+    ([key]
+     (get data key (get cf/config key)))
+    ([key default]
+     (get data key (get cf/config key default)))))
+
+(defn reset-mock!
+  [m]
+  (reset! m @(mk/make-mock {})))

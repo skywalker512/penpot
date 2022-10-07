@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http.errors
   "A errors handling for the http server."
@@ -10,6 +10,7 @@
    [app.common.exceptions :as ex]
    [app.common.logging :as l]
    [app.common.spec :as us]
+   [app.http :as-alias http]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [yetti.request :as yrq]
@@ -50,6 +51,11 @@
   [err _]
   (yrs/response 400 (ex-data err)))
 
+(defmethod handle-exception :rate-limit
+  [err _]
+  (let [headers (-> err ex-data ::http/headers)]
+    (yrs/response :status 429 :body "" :headers headers)))
+
 (defmethod handle-exception :validation
   [err _]
   (let [{:keys [code] :as data} (ex-data err)]
@@ -71,7 +77,7 @@
   [error request]
   (let [edata (ex-data error)
         explain (us/pretty-explain edata)]
-    (l/error ::l/raw (ex-message error)
+    (l/error ::l/raw (str (ex-message error) "\n" explain)
              ::l/context (get-context request)
              :cause error)
     (yrs/response :status 500
@@ -143,12 +149,10 @@
 
 (defn handle
   [cause request]
-
   (cond
     (or (instance? java.util.concurrent.CompletionException cause)
         (instance? java.util.concurrent.ExecutionException cause))
     (handle-exception (.getCause ^Throwable cause) request)
-
 
     (ex/wrapped? cause)
     (let [context (meta cause)

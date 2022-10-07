@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.storage.fs
   (:require
@@ -10,11 +10,12 @@
    [app.common.spec :as us]
    [app.common.uri :as u]
    [app.storage.impl :as impl]
-   [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
-   [datoteka.core :as fs]
+   [datoteka.fs :as fs]
+   [datoteka.io :as io]
    [integrant.core :as ig]
+   [promesa.core :as p]
    [promesa.exec :as px])
   (:import
    java.io.InputStream
@@ -57,7 +58,7 @@
         (fs/create-dir (fs/parent full)))
       (with-open [^InputStream src  (io/input-stream content)
                   ^OutputStream dst (io/output-stream full)]
-        (io/copy src dst)))))
+        (io/copy! src dst)))))
 
 (defmethod impl/get-object-data :fs
   [{:keys [executor] :as backend} {:keys [id] :as object}]
@@ -72,9 +73,10 @@
       (io/input-stream full))))
 
 (defmethod impl/get-object-bytes :fs
-  [{:keys [executor] :as backend} object]
-  (px/with-dispatch executor
-    (fs/slurp-bytes (impl/get-object-data backend object))))
+  [backend object]
+  (p/let [input (impl/get-object-data backend object)]
+    (ex/with-always (io/close! input)
+      (io/read-as-bytes input))))
 
 (defmethod impl/get-object-url :fs
   [{:keys [uri executor] :as backend} {:keys [id] :as object} _]

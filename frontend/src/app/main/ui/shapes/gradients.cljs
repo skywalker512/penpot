@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.gradients
   (:require
@@ -14,7 +14,7 @@
    [app.main.ui.context :as muc]
    [app.main.ui.shapes.export :as ed]
    [app.util.object :as obj]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (defn add-metadata [props gradient]
   (-> props
@@ -27,13 +27,15 @@
       (obj/set! "penpot:width"   (:width gradient))))
 
 (mf/defc linear-gradient [{:keys [id gradient shape]}]
-  (let [transform (when (= :path (:type shape)) (gsh/transform-matrix shape nil (gpt/point 0.5 0.5)))
+  (let [transform (when (= :path (:type shape))
+                    (gsh/transform-matrix shape nil (gpt/point 0.5 0.5)))
+
         base-props #js {:id id
                         :x1 (:start-x gradient)
                         :y1 (:start-y gradient)
                         :x2 (:end-x gradient)
                         :y2 (:end-y gradient)
-                        :gradientTransform transform}
+                        :gradientTransform (dm/str transform)}
 
         include-metadata? (mf/use-ctx ed/include-metadata-ctx)
 
@@ -102,7 +104,7 @@
   (let [attr   (obj/get props "attr")
         shape  (obj/get props "shape")
         id     (obj/get props "id")
-        id'    (mf/use-ctx muc/render-ctx)
+        id'    (mf/use-ctx muc/render-id)
         id     (or id (dm/str (name attr) "_" id'))
         gradient (get shape attr)
         gradient-props #js {:id id

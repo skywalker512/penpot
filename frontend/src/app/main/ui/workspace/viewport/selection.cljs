@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.viewport.selection
   "Selection handlers component."
@@ -11,7 +11,7 @@
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
-   [app.common.pages :as cp]
+   [app.common.types.shape :as cts]
    [app.main.data.workspace :as dw]
    [app.main.refs :as refs]
    [app.main.store :as st]
@@ -20,8 +20,8 @@
    [app.util.dom :as dom]
    [app.util.object :as obj]
    [debug :refer [debug?]]
-   [rumext.alpha :as mf]
-   [rumext.util :refer [map->obj]]))
+   [rumext.v2 :as mf]
+   [rumext.v2.util :refer [map->obj]]))
 
 (def rotation-handler-size 20)
 (def resize-point-radius 4)
@@ -170,7 +170,7 @@
             :height size
             :fill (if (debug? :handlers) "blue" "none")
             :stroke-width 0
-            :transform (str transform)
+            :transform (dm/str transform)
             :on-mouse-down on-rotate}]))
 
 (mf/defc resize-point-handler
@@ -224,7 +224,7 @@
         height (/ resize-side-height zoom)
         offset-y (if (= align :outside) (- height) (- (/ height 2)))
         target-y (+ y offset-y)
-        transform-str (str (gmt/multiply transform (gmt/rotate-matrix angle (gpt/point x y))))]
+        transform-str (dm/str (gmt/multiply transform (gmt/rotate-matrix angle (gpt/point x y))))]
     [:g.resize-handler
      (when show-handler?
        [:circle {:r (/ resize-point-radius zoom)
@@ -271,13 +271,13 @@
         current-transform (mf/deref refs/current-transform)
 
         selrect (:selrect shape)
-        transform (gsh/transform-matrix shape {:no-flip true})]
+        transform (gsh/transform-str shape {:no-flip true})]
 
     (when (not (#{:move :rotate} current-transform))
       [:g.controls {:pointer-events (if disable-handlers "none" "visible")}
        ;; Selection rect
        [:& selection-rect {:rect selrect
-                           :transform (str transform)
+                           :transform transform
                            :zoom zoom
                            :color color
                            :on-move-selected on-move-selected
@@ -316,7 +316,7 @@
                              :color color}
                props (map->obj (merge common-props props))]
            (case type
-             :rotation (when (not= :frame (:type shape)) [:> rotation-handler props])
+             :rotation [:> rotation-handler props]
              :resize-point [:> resize-point-handler props]
              :resize-side [:> resize-side-handler props])))])))
 
@@ -327,7 +327,7 @@
   (let [{:keys [x y width height]} shape]
     [:g.controls
      [:rect.main {:x x :y y
-                  :transform (str (gsh/transform-matrix shape))
+                  :transform (gsh/transform-str shape)
                   :width width
                   :height height
                   :pointer-events "visible"
@@ -343,7 +343,7 @@
                #(->> shapes
                      (map gsh/transform-shape)
                      (gsh/selection-rect)
-                     (cp/setup-shape)))
+                     (cts/setup-shape)))
         on-resize
         (fn [current-position _initial-position event]
           (when (dom/left-mouse? event)
@@ -371,7 +371,7 @@
                #(->> shapes
                      (map gsh/transform-shape)
                      (gsh/selection-rect)
-                     (cp/setup-shape)))]
+                     (cts/setup-shape)))]
 
     [:& controls-selection
      {:shape shape

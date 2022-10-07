@@ -29,7 +29,7 @@
              :depends-on #{:shared}}}
 
    :compiler-options
-   {:output-feature-set :es8
+   {:output-feature-set :es2020
     :output-wrapper false
     :warnings {:fn-deprecated false}}
 
@@ -90,7 +90,7 @@
    :autorun true
 
    :compiler-options
-   {:output-feature-set :es8
+   {:output-feature-set :es2020
     :output-wrapper false
     :source-map true
     :source-map-include-sources-content true

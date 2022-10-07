@@ -2,16 +2,16 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.rpc.queries.viewer
   (:require
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.db :as db]
+   [app.rpc.commands.comments :as comments]
    [app.rpc.queries.files :as files]
    [app.rpc.queries.share-link :as slnk]
-   [app.rpc.queries.teams :as teams]
    [app.util.services :as sv]
    [clojure.spec.alpha :as s]
    [promesa.core :as p]))
@@ -23,11 +23,11 @@
   (db/get-by-id pool :project id {:columns [:id :name :team-id]}))
 
 (defn- retrieve-bundle
-  [{:keys [pool] :as cfg} file-id]
-  (p/let [file    (files/retrieve-file cfg file-id)
+  [{:keys [pool] :as cfg} file-id profile-id components-v2]
+  (p/let [file    (files/retrieve-file cfg file-id components-v2)
           project (retrieve-project pool (:project-id file))
           libs    (files/retrieve-file-libraries cfg false file-id)
-          users   (teams/retrieve-users pool (:team-id project))
+          users   (comments/get-file-comments-users pool file-id profile-id)
 
           links   (->> (db/query pool :share-link {:file-id file-id})
                        (mapv slnk/decode-share-link-row))
@@ -45,16 +45,19 @@
 (s/def ::file-id ::us/uuid)
 (s/def ::profile-id ::us/uuid)
 (s/def ::share-id ::us/uuid)
+(s/def ::components-v2 ::us/boolean)
 
 (s/def ::view-only-bundle
-  (s/keys :req-un [::file-id] :opt-un [::profile-id ::share-id]))
+  (s/keys :req-un [::file-id] :opt-un [::profile-id ::share-id ::components-v2]))
 
 (sv/defmethod ::view-only-bundle {:auth false}
-  [{:keys [pool] :as cfg} {:keys [profile-id file-id share-id] :as params}]
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id share-id components-v2] :as params}]
   (p/let [slink  (slnk/retrieve-share-link pool file-id share-id)
           perms  (files/get-permissions pool profile-id file-id share-id)
-          bundle (p/-> (retrieve-bundle cfg file-id)
-                       (assoc :permissions perms))]
+          thumbs (files/retrieve-object-thumbnails cfg file-id)
+          bundle (p/-> (retrieve-bundle cfg file-id profile-id components-v2)
+                       (assoc :permissions perms)
+                       (assoc-in [:file :thumbnails] thumbs))]
 
     ;; When we have neither profile nor share, we just return a not
     ;; found response to the user.

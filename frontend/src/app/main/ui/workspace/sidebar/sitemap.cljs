@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.sidebar.sitemap
   (:require
@@ -21,7 +21,7 @@
    [app.util.keyboard :as kbd]
    [cuerdas.core :as str]
    [okulary.core :as l]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;; --- Page Item
 
@@ -50,11 +50,11 @@
         on-delete
         (mf/use-callback
          (mf/deps id)
-         (st/emitf (modal/show
-                    {:type :confirm
-                     :title (tr "modals.delete-page.title")
-                     :message (tr "modals.delete-page.body")
-                     :on-accept delete-fn})))
+         #(st/emit! (modal/show
+                      {:type :confirm
+                       :title (tr "modals.delete-page.title")
+                       :message (tr "modals.delete-page.body")
+                       :on-accept delete-fn})))
 
         on-double-click
         (mf/use-callback

@@ -2,17 +2,14 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.handlers.export-frames
   (:require
-   ["path" :as path]
    [app.common.logging :as l]
-   [app.common.exceptions :as exc]
    [app.common.spec :as us]
-   [app.common.pprint :as pp]
-   [app.handlers.resources :as rsc]
    [app.handlers.export-shapes :refer [prepare-exports]]
+   [app.handlers.resources :as rsc]
    [app.redis :as redis]
    [app.renderer :as rd]
    [app.util.shell :as sh]
@@ -29,7 +26,6 @@
 (s/def ::file-id ::us/uuid)
 (s/def ::page-id ::us/uuid)
 (s/def ::object-id ::us/uuid)
-(s/def ::uri ::us/uri)
 
 (s/def ::export
   (s/keys :req-un [::file-id ::page-id ::object-id ::name]))
@@ -39,18 +35,18 @@
 
 (s/def ::params
   (s/keys :req-un [::exports]
-          :opt-un [::uri ::name]))
+          :opt-un [::name]))
 
 (defn handler
-  [{:keys [:request/auth-token] :as exchange} {:keys [exports uri profile-id] :as params}]
+  [{:keys [:request/auth-token] :as exchange} {:keys [exports] :as params}]
   ;; NOTE: we need to have the `:type` prop because the exports
   ;; datastructure preparation uses it for creating the groups.
   (let [exports  (-> (map #(assoc % :type :pdf :scale 1 :suffix "") exports)
-                     (prepare-exports auth-token uri))]
+                     (prepare-exports auth-token))]
     (handle-export exchange (assoc params :exports exports))))
 
 (defn handle-export
-  [exchange {:keys [exports wait uri name profile-id] :as params}]
+  [exchange {:keys [exports wait name profile-id] :as params}]
   (let [total       (count exports)
         topic       (str profile-id)
         resource    (rsc/create :pdf (or name (-> exports first :name)))
@@ -112,7 +108,8 @@
 
     (-> (p/loop [exports (seq exports)]
           (when-let [export (first exports)]
-            (p/let [proc (rd/render export on-object)]
+            (p/do
+              (rd/render export on-object)
               (p/recur (rest exports)))))
 
         (p/then (fn [_] (deref result)))
@@ -123,14 +120,14 @@
                   (-> (sh/stat (:path resource))
                       (p/then #(merge resource %)))))
         (p/catch on-error)
-        (p/finally (fn [result cause]
+        (p/finally (fn [_ cause]
                      (when-not cause
                        (on-complete)))))))
 
 (defn- join-pdf
   [file-id paths]
-  (p/let [tmpdir (sh/mktmpdir! "join-pdf")
-          path   (path/join tmpdir (str/concat file-id ".pdf"))]
+  (p/let [prefix (str/concat "penpot.tmp.pdfunite." file-id ".")
+          path   (sh/tempfile :prefix prefix :suffix ".pdf")]
     (sh/run-cmd! (str "pdfunite " (str/join " " paths) " " path))
     path))
 
@@ -138,5 +135,4 @@
   [{:keys [path] :as resource} output-path]
   (p/do
     (sh/move! output-path path)
-    (sh/rmdir! (path/dirname output-path))
     resource))

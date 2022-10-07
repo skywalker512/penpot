@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.users
   (:require
@@ -157,8 +157,13 @@
   accepting invitation, or third party auth signup or singin."
   [profile]
   (letfn [(get-redirect-event []
-            (let [team-id (:default-team-id profile)]
-              (rt/nav' :dashboard-projects {:team-id team-id})))]
+            (let [team-id (:default-team-id profile)
+                  redirect-url (:redirect-url @storage)]
+              (if (some? redirect-url)
+                (do
+                  (swap! storage dissoc :redirect-url)
+                  (.replace js/location redirect-url))
+                (rt/nav' :dashboard-projects {:team-id team-id}))))]
     (ptk/reify ::logged-in
       IDeref
       (-deref [_] profile)
@@ -168,8 +173,7 @@
         (when (is-authenticated? profile)
           (->> (rx/of (profile-fetched profile)
                       (fetch-teams)
-                      (get-redirect-event)
-                      (ws/initialize))
+                      (get-redirect-event))
                (rx/observe-on :async)))))))
 
 (s/def ::invitation-token ::us/not-empty-string)
@@ -194,7 +198,7 @@
                     :invitation-token invitation-token}]
 
         ;; NOTE: We can't take the profile value from login because
-        ;; there are cases when login is successfull but the cookie is
+        ;; there are cases when login is successful but the cookie is
         ;; not set properly (because of possible misconfiguration).
         ;; So, we proceed to make an additional call to fetch the
         ;; profile, and ensure that cookie is set correctly. If
@@ -202,7 +206,7 @@
         ;; the returned profile is an NOT authenticated profile, we
         ;; proceed to logout and show an error message.
 
-        (->> (rp/mutation :login (d/without-nils params))
+        (->> (rp/command! :login-with-password (d/without-nils params))
              (rx/merge-map (fn [data]
                              (rx/merge
                               (rx/of (fetch-profile))
@@ -288,7 +292,7 @@
    (ptk/reify ::logout
      ptk/WatchEvent
      (watch [_ _ _]
-       (->> (rp/mutation :logout)
+       (->> (rp/command! :logout)
             (rx/delay-at-least 300)
             (rx/catch (constantly (rx/of 1)))
             (rx/map #(logged-out params)))))))
@@ -431,7 +435,6 @@
              (rx/map (constantly (fetch-profile)))
              (rx/catch on-error))))))
 
-
 (defn fetch-users
   [{:keys [team-id] :as params}]
   (us/assert ::us/uuid team-id)
@@ -442,8 +445,22 @@
     (ptk/reify ::fetch-team-users
       ptk/WatchEvent
       (watch [_ _ _]
-        (->> (rp/query :team-users {:team-id team-id})
+        (->> (rp/query! :team-users {:team-id team-id})
              (rx/map #(partial fetched %)))))))
+
+(defn fetch-file-comments-users
+  [{:keys [team-id] :as params}]
+  (us/assert ::us/uuid team-id)
+  (letfn [(fetched [users state]
+            (->> users
+                 (d/index-by :id)
+                 (assoc state :file-comments-users)))]
+    (ptk/reify ::fetch-file-comments-users
+      ptk/WatchEvent
+      (watch [_ state _]
+        (let [share-id (-> state :viewer-local :share-id)]
+          (->> (rp/command! :get-profiles-for-file-comments {:team-id team-id :share-id share-id})
+               (rx/map #(partial fetched %))))))))
 
 ;; --- EVENT: request-account-deletion
 
@@ -477,7 +494,7 @@
              :or {on-error rx/throw
                   on-success identity}} (meta data)]
 
-        (->> (rp/mutation :request-profile-recovery data)
+        (->> (rp/command! :request-profile-recovery data)
              (rx/tap on-success)
              (rx/catch on-error))))))
 
@@ -496,7 +513,7 @@
       (let [{:keys [on-error on-success]
              :or {on-error rx/throw
                   on-success identity}} (meta data)]
-        (->> (rp/mutation :recover-profile data)
+        (->> (rp/command! :recover-profile data)
              (rx/tap on-success)
              (rx/catch on-error))))))
 
@@ -507,7 +524,7 @@
   (ptk/reify ::create-demo-profile
     ptk/WatchEvent
     (watch [_ _ _]
-      (->> (rp/mutation :create-demo-profile {})
+      (->> (rp/command! :create-demo-profile {})
            (rx/map login)))))
 
 

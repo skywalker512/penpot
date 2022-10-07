@@ -2,16 +2,19 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.rpc.queries.files
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.exceptions :as ex]
+   [app.common.geom.shapes :as gsh]
    [app.common.pages.helpers :as cph]
    [app.common.pages.migrations :as pmg]
    [app.common.spec :as us]
+   [app.common.types.file :as ctf]
+   [app.common.types.shape-tree :as ctt]
    [app.db :as db]
    [app.db.sql :as sql]
    [app.rpc.helpers :as rpch]
@@ -25,7 +28,6 @@
    [cuerdas.core :as str]))
 
 (declare decode-row)
-(declare decode-row-xf)
 
 ;; --- Helpers & Specs
 
@@ -37,6 +39,7 @@
 (s/def ::profile-id ::us/uuid)
 (s/def ::team-id ::us/uuid)
 (s/def ::search-term ::us/string)
+(s/def ::components-v2 ::us/boolean)
 
 ;; --- Query: File Permissions
 
@@ -84,7 +87,8 @@
         :is-owner is-owner
         :is-admin (or is-owner is-admin)
         :can-edit (or is-owner is-admin can-edit)
-        :can-read true})))
+        :can-read true
+        :is-logged (some? profile-id)})))
   ([conn profile-id file-id share-id]
    (let [perms  (get-permissions conn profile-id file-id)
          ldata  (retrieve-share-link conn file-id share-id)]
@@ -97,7 +101,9 @@
        (some? perms) perms
        (some? ldata) {:type :share-link
                       :can-read true
-                      :flags (:flags ldata)}))))
+                      :is-logged (some? profile-id)
+                      :who-comment (:who-comment ldata)
+                      :who-inspect (:who-inspect ldata)}))))
 
 (def has-edit-permissions?
   (perms/make-edition-predicate-fn get-permissions))
@@ -105,11 +111,24 @@
 (def has-read-permissions?
   (perms/make-read-predicate-fn get-permissions))
 
+(def has-comment-permissions?
+  (perms/make-comment-predicate-fn get-permissions))
+
 (def check-edition-permissions!
   (perms/make-check-fn has-edit-permissions?))
 
 (def check-read-permissions!
   (perms/make-check-fn has-read-permissions?))
+
+;; A user has comment permissions if she has read permissions, or comment permissions
+(defn check-comment-permissions!
+  [conn profile-id file-id share-id]
+   (let [can-read (has-read-permissions? conn profile-id file-id)
+         can-comment  (has-comment-permissions? conn profile-id file-id share-id)]
+     (when-not (or can-read can-comment)
+       (ex/raise :type :not-found
+                 :code :object-not-found
+                 :hint "not found"))))
 
 ;; --- Query: Files search
 
@@ -197,31 +216,40 @@
      (->> (db/exec! pool [sql file-id])
           (d/index-by :object-id :data))))
 
-  ([{:keys [pool]} file-id frame-ids]
+  ([{:keys [pool]} file-id object-ids]
    (with-open [conn (db/open pool)]
      (let [sql (str/concat
                 "select object_id, data "
                 "  from file_object_thumbnail"
                 " where file_id=? and object_id = ANY(?)")
-           ids (db/create-array conn "uuid" (seq frame-ids))]
+           ids (db/create-array conn "text" (seq object-ids))]
        (->> (db/exec! conn [sql file-id ids])
             (d/index-by :object-id :data))))))
 
 (defn retrieve-file
-  [{:keys [pool] :as cfg} id]
-  (->> (db/get-by-id pool :file id)
-       (decode-row)
-       (pmg/migrate-file)))
+  [{:keys [pool] :as cfg} id components-v2]
+  (let [file (->> (db/get-by-id pool :file id)
+                  (decode-row)
+                  (pmg/migrate-file))]
+
+    (if components-v2
+      (update file :data ctf/migrate-to-components-v2)
+      (if (get-in file [:data :options :components-v2])
+        (ex/raise :type :restriction
+                  :code :feature-disabled
+                  :hint "tried to open a components-v2 file with feature disabled")
+        file))))
 
 (s/def ::file
-  (s/keys :req-un [::profile-id ::id]))
+  (s/keys :req-un [::profile-id ::id]
+          :opt-un [::components-v2]))
 
 (sv/defmethod ::file
   "Retrieve a file by its ID. Only authenticated users."
-  [{:keys [pool] :as cfg} {:keys [profile-id id] :as params}]
+  [{:keys [pool] :as cfg} {:keys [profile-id id components-v2] :as params}]
   (let [perms (get-permissions pool profile-id id)]
     (check-read-permissions! perms)
-    (let [file   (retrieve-file cfg id)
+    (let [file   (retrieve-file cfg id components-v2)
           thumbs (retrieve-object-thumbnails cfg id)]
       (-> file
           (assoc :thumbnails thumbs)
@@ -250,7 +278,7 @@
 (s/def ::page
   (s/and
    (s/keys :req-un [::profile-id ::file-id]
-           :opt-un [::page-id ::object-id])
+           :opt-un [::page-id ::object-id ::components-v2])
    (fn [obj]
      (if (contains? obj :object-id)
        (contains? obj :page-id)
@@ -266,9 +294,9 @@
   mandatory.
 
   Mainly used for rendering purposes."
-  [{:keys [pool] :as cfg} {:keys [profile-id file-id page-id object-id] :as props}]
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id page-id object-id components-v2] :as props}]
   (check-read-permissions! pool profile-id file-id)
-  (let [file    (retrieve-file cfg file-id)
+  (let [file    (retrieve-file cfg file-id components-v2)
         page-id (or page-id (-> file :data :pages first))
         page    (get-in file [:data :pages-index page-id])]
 
@@ -286,11 +314,11 @@
           (get-thumbnail-frame [data]
             (d/seek :use-for-thumbnail?
                     (for [page  (-> data :pages-index vals)
-                          frame (-> page :objects cph/get-frames)]
+                          frame (-> page :objects ctt/get-frames)]
                       (assoc frame :page-id (:id page)))))
 
-          ;; function responsible to filter objects data strucuture of
-          ;; all unneded shapes if a concrete frame is provided. If no
+          ;; function responsible to filter objects data structure of
+          ;; all unneeded shapes if a concrete frame is provided. If no
           ;; frame, the objects is returned untouched.
           (filter-objects [objects frame-id]
             (d/index-by :id (cph/get-children-with-self objects frame-id)))
@@ -298,19 +326,35 @@
           ;; function responsible of assoc available thumbnails
           ;; to frames and remove all children shapes from objects if
           ;; thumbnails is available
-          (assoc-thumbnails [objects thumbnails]
+          (assoc-thumbnails [objects page-id thumbnails]
             (loop [objects objects
                    frames  (filter cph/frame-shape? (vals objects))]
 
-              (if-let [{:keys [id] :as frame} (first frames)]
-                (let [frame (if-let [thumb (get thumbnails id)]
+              (if-let [frame  (-> frames first)]
+                (let [frame-id (:id frame)
+                      object-id (str page-id frame-id)
+                      frame (if-let [thumb (get thumbnails object-id)]
                               (assoc frame :thumbnail thumb :shapes [])
-                              (dissoc frame :thumbnail))]
+                              (dissoc frame :thumbnail))
+
+                      children-ids
+                      (cph/get-children-ids objects frame-id)
+
+                      bounds
+                      (when (:show-content frame)
+                        (gsh/selection-rect (concat [frame] (->> children-ids (map (d/getf objects))))))
+
+                      frame
+                      (cond-> frame
+                        (some? bounds)
+                        (assoc :children-bounds bounds))]
+
                   (if (:thumbnail frame)
-                    (recur (-> (assoc objects id frame)
-                               (d/without-keys (cph/get-children-ids objects id)))
+                    (recur (-> objects
+                               (assoc frame-id frame)
+                               (d/without-keys children-ids))
                            (rest frames))
-                    (recur (assoc objects id frame)
+                    (recur (assoc objects frame-id frame)
                            (rest frames))))
 
                 objects)))]
@@ -319,10 +363,11 @@
           frame-id  (:id frame)
           page-id   (or (:page-id frame)
                         (-> data :pages first))
-          page      (dm/get-in data [:pages-index page-id])
 
-          obj-ids   (or (some-> frame-id list)
-                        (map :id (cph/get-frames page)))
+          page      (dm/get-in data [:pages-index page-id])
+          frame-ids (if (some? frame) (list frame-id) (map :id (ctt/get-frames (:objects page))))
+
+          obj-ids   (map #(str page-id %) frame-ids)
           thumbs    (retrieve-object-thumbnails cfg id obj-ids)]
 
       (cond-> page
@@ -333,19 +378,20 @@
             (update :objects filter-objects frame-id))
 
         ;; Assoc the available thumbnails and prune not visible shapes
-        ;; for avoid transfer unnecesary data.
+        ;; for avoid transfer unnecessary data.
         :always
-        (update :objects assoc-thumbnails thumbs)))))
+        (update :objects assoc-thumbnails page-id thumbs)))))
 
 (s/def ::file-data-for-thumbnail
-  (s/keys :req-un [::profile-id ::file-id]))
+  (s/keys :req-un [::profile-id ::file-id]
+          :opt-un [::components-v2]))
 
 (sv/defmethod ::file-data-for-thumbnail
   "Retrieves the data for generate the thumbnail of the file. Used
   mainly for render thumbnails on dashboard."
-  [{:keys [pool] :as cfg} {:keys [profile-id file-id] :as props}]
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id components-v2] :as props}]
   (check-read-permissions! pool profile-id file-id)
-  (let [file (retrieve-file cfg file-id)]
+  (let [file (retrieve-file cfg file-id components-v2)]
     {:file-id file-id
      :revn (:revn file)
      :page (get-file-thumbnail-data cfg file)}))
@@ -356,6 +402,7 @@
 (def ^:private sql:team-shared-files
   "select f.id,
           f.revn,
+          f.data,
           f.project_id,
           f.created_at,
           f.modified_at,
@@ -374,7 +421,26 @@
 
 (sv/defmethod ::team-shared-files
   [{:keys [pool] :as cfg} {:keys [team-id] :as params}]
-  (db/exec! pool [sql:team-shared-files team-id]))
+  (let [assets-sample
+        (fn [assets limit]
+          (let [sorted-assets (->> (vals assets)
+                                   (sort-by #(str/lower (:name %))))]
+
+          {:count (count sorted-assets)
+           :sample (into [] (take limit sorted-assets))}))
+
+        library-summary
+        (fn [data]
+          {:components (assets-sample (:components data) 4)
+           :colors (assets-sample (:colors data) 3)
+           :typographies (assets-sample (:typographies data) 3)})
+
+        xform (comp
+                (map decode-row)
+                (map #(assoc % :library-summary (library-summary (:data %))))
+                (map #(dissoc % :data)))]
+
+    (into #{} xform (db/exec! pool [sql:team-shared-files team-id]))))
 
 
 ;; --- Query: File Libraries used by a File
@@ -417,6 +483,25 @@
   [{:keys [pool] :as cfg} {:keys [profile-id file-id] :as params}]
   (check-read-permissions! pool profile-id file-id)
   (retrieve-file-libraries cfg false file-id))
+
+
+;; --- Query: Files that use this File library
+
+(def ^:private sql:library-using-files
+  "SELECT f.id,
+          f.name
+     FROM file_library_rel AS flr
+     JOIN file AS f ON (f.id = flr.file_id)
+    WHERE flr.library_file_id = ?
+      AND (f.deleted_at IS NULL OR f.deleted_at > now())")
+
+(s/def ::library-using-files
+  (s/keys :req-un [::profile-id ::file-id]))
+
+(sv/defmethod ::library-using-files
+  [{:keys [pool] :as cfg} {:keys [profile-id file-id] :as params}]
+  (check-read-permissions! pool profile-id file-id)
+  (db/exec! pool [sql:library-using-files file-id]))
 
 ;; --- QUERY: team-recent-files
 
@@ -487,7 +572,3 @@
     (cond-> row
       changes (assoc :changes (blob/decode changes))
       data    (assoc :data (blob/decode data)))))
-
-(def decode-row-xf
-  (comp (map decode-row)
-        (map pmg/migrate-file)))

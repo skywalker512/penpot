@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.path.edition
   (:require
@@ -13,7 +13,7 @@
    [app.common.path.shapes-to-path :as upsp]
    [app.common.path.subpaths :as ups]
    [app.main.data.workspace.changes :as dch]
-   [app.main.data.workspace.common :as dwc]
+   [app.main.data.workspace.edition :as dwe]
    [app.main.data.workspace.path.changes :as changes]
    [app.main.data.workspace.path.drawing :as drawing]
    [app.main.data.workspace.path.helpers :as helpers]
@@ -64,7 +64,7 @@
           (let [changes (changes/generate-path-changes it objects page-id shape (:content shape) new-content)]
             (if (empty? new-content)
               (rx/of (dch/commit-changes changes)
-                     dwc/clear-edition-mode)
+                     dwe/clear-edition-mode)
               (rx/of (dch/commit-changes changes)
                      (selection/update-selection point-change)
                      (fn [state] (update-in state [:workspace-local :edit-path id] dissoc :content-modifiers :moving-nodes :moving-handler))))))))))

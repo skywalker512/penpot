@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.components.forms
   (:require
@@ -17,7 +17,7 @@
    [cljs.core :as c]
    [clojure.string]
    [cuerdas.core :as str]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (def form-ctx (mf/create-context nil))
 (def use-form fm/use-form)
@@ -79,6 +79,7 @@
         on-focus  #(reset! focus? true)
         on-change (fn [event]
                     (let [value (-> event dom/get-target dom/get-input-value)]
+                      (swap! form assoc-in [:touched input-name] true)
                       (fm/on-input-change form input-name value trim)))
 
         on-blur
@@ -242,7 +243,7 @@
   (into [] (distinct) (conj coll item)))
 
 (mf/defc multi-input
-  [{:keys [form label class name trim valid-item-fn] :as props}]
+  [{:keys [form label class name trim valid-item-fn on-submit] :as props}]
   (let [form       (or form (mf/use-ctx form-ctx))
         input-name (get props :name)
         touched?   (get-in @form [:touched input-name])
@@ -296,8 +297,11 @@
                (dom/prevent-default event)
                (dom/stop-propagation event)
                (let [val (cond-> @value trim str/trim)]
-                 (reset! value "")
-                 (swap! items conj-dedup {:text val :valid (valid-item-fn val)})))
+                 (when (and (kbd/enter? event) (str/empty? @value) (not-empty @items))
+                   (on-submit form))
+                 (when (not (str/empty? @value))
+                   (reset! value "")
+                   (swap! items conj-dedup {:text val :valid (valid-item-fn val)}))))
 
              (and (kbd/backspace? event)
                   (str/empty? @value))

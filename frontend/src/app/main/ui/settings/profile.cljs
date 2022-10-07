@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.settings.profile
   (:require
@@ -19,7 +19,7 @@
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
    [cljs.spec.alpha :as s]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (s/def ::fullname ::us/not-empty-string)
 (s/def ::email ::us/email)
@@ -42,10 +42,7 @@
 (mf/defc profile-form
   []
   (let [profile (mf/deref refs/profile)
-        initial (mf/with-memo [profile]
-                  (let [subscribed? (-> profile :props :newsletter-subscribed)]
-                    (assoc profile :newsletter-subscribed subscribed?)))
-        form    (fm/use-form :spec ::profile-form :initial initial)]
+        form    (fm/use-form :spec ::profile-form :initial profile)]
 
     [:& fm/form {:on-submit on-submit
                  :form form
@@ -68,17 +65,6 @@
        [:div.change-email
         [:a {:on-click #(modal/show! :change-email {})}
          (tr "dashboard.change-email")]]]]
-
-     (when (contains? @cf/flags :newsletter-subscription)
-       [:div.newsletter-subs
-        [:p.newsletter-title (tr "dashboard.newsletter-title")]
-        [:& fm/input {:name :newsletter-subscribed
-                      :class "check-primary"
-                      :type "checkbox"
-                      :label  (tr "dashboard.newsletter-msg")}]
-        [:p.info (tr "onboarding.newsletter.privacy1")
-         [:a {:target "_blank" :href "https://penpot.app/privacy.html"} (tr "onboarding.newsletter.policy")]]
-        [:p.info (tr "onboarding.newsletter.privacy2")]])
 
      [:& fm/submit-button
       {:label (tr "dashboard.save-settings")

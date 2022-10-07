@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.text.fontfaces
   (:require
@@ -15,7 +15,7 @@
    [beicon.core :as rx]
    [clojure.set :as set]
    [cuerdas.core :as str]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (defn replace-embeds
   "Replace into the font-faces of a CSS the URL's that are present in `embed-data` by its
@@ -64,21 +64,31 @@
                     (mf/deps fonts-css)
                     #(fonts/extract-fontface-urls fonts-css))
 
+
         ;; Calculate the data-uris for these fonts
         fonts-embed (embed/use-data-uris fonts-urls)
+
+        loading? (some? (d/seek #(not (contains? fonts-embed %)) fonts-urls))
 
         ;; Creates a style tag by replacing the urls with the data uri
         style (replace-embeds fonts-css fonts-urls fonts-embed)]
 
-    (when (d/not-empty? style)
-      [:style style])))
+    (cond
+      (d/not-empty? style)
+      [:style {:data-loading loading?} style]
 
-(defn frame->fonts
-  [frame objects]
-  (->> (cph/get-children objects (:id frame))
-       (filter cph/text-shape?)
-       (map (comp fonts/get-content-fonts :content))
-       (reduce set/union #{})))
+      (d/not-empty? fonts)
+      [:style {:data-loading true}])))
+
+(defn shape->fonts
+  [shape objects]
+  (let [initial (cond-> #{}
+                  (cph/text-shape? shape)
+                  (into (fonts/get-content-fonts (:content shape))))]
+    (->> (cph/get-children objects (:id shape))
+         (filter cph/text-shape?)
+         (map (comp fonts/get-content-fonts :content))
+         (reduce set/union initial))))
 
 (defn shapes->fonts
   [shapes]

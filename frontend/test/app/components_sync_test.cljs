@@ -4,9 +4,10 @@
     [app.common.data :as d]
     [app.common.geom.point :as gpt]
     [app.common.pages.helpers :as cph]
+    [app.common.types.container :as ctn]
     [app.main.data.workspace :as dw]
     [app.main.data.workspace.changes :as dch]
-    [app.main.data.workspace.common :as dwc]
+    [app.main.data.workspace.shapes :as dwsh]
     [app.main.data.workspace.libraries :as dwl]
     [app.main.data.workspace.libraries-helpers :as dwlh]
     [app.main.data.workspace.state-helpers :as wsh]
@@ -192,7 +193,7 @@
 
         (ptk/emit!
           store
-          (dwc/delete-shapes #{(:id shape1)})
+          (dwsh/delete-shapes #{(:id shape1)})
           :the/end)))))
 
 (t/deftest test-touched-children-move
@@ -767,7 +768,7 @@
 
         (ptk/emit!
           store
-          (dwc/delete-shapes #{(:id shape1)})
+          (dwsh/delete-shapes #{(:id shape1)})
           (dwl/reset-component (:id instance1))
           :the/end)))))
 
@@ -1352,7 +1353,7 @@
             instance1 (thp/get-shape state :instance1)
             instance2 (thp/get-shape state :instance2)
 
-            shape2    (cph/get-shape (wsh/lookup-page state)
+            shape2    (ctn/get-shape (wsh/lookup-page state)
                                      (first (:shapes instance2)))
 
             update-fn1 (fn [shape]
@@ -1538,7 +1539,7 @@
 
         (ptk/emit!
           store
-          (dwc/delete-shapes #{(:id shape1)})
+          (dwsh/delete-shapes #{(:id shape1)})
           (dwl/update-component-sync (:id instance1) (:id file))
           :the/end)))))
 

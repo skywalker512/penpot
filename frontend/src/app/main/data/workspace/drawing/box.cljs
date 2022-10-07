@@ -2,15 +2,16 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.drawing.box
   (:require
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
-   [app.common.pages :as cp]
    [app.common.pages.helpers :as cph]
+   [app.common.types.shape :as cts]
+   [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.main.data.workspace.drawing.common :as common]
    [app.main.data.workspace.state-helpers :as wsh]
@@ -64,23 +65,21 @@
             objects (wsh/lookup-page-objects state page-id)
             focus   (:workspace-focus-selected state)
             zoom    (get-in state [:workspace-local :zoom] 1)
+            fid     (ctst/top-nested-frame objects initial)
 
-            frames  (cph/get-frames objects)
-            fid     (or (->> frames
-                             (filter #(gsh/has-point? % initial))
-                             first
-                             :id)
-                        uuid/zero)
+            shape   (get-in state [:workspace-drawing :object])
+            shape   (-> shape
+                        (cts/setup-shape {:x (:x initial)
+                                         :y (:y initial)
+                                         :width 0.01
+                                         :height 0.01})
+                        (cond-> (and (cph/frame-shape? shape)
+                                     (not= fid uuid/zero))
+                          (assoc :fills [] :hide-in-viewer true))
 
-            shape (-> state
-                      (get-in [:workspace-drawing :object])
-                      (cp/setup-shape {:x (:x initial)
-                                       :y (:y initial)
-                                       :width 0.01
-                                       :height 0.01})
-                      (assoc :frame-id fid)
-                      (assoc :initialized? true)
-                      (assoc :click-draw? true))]
+                        (assoc :frame-id fid)
+                        (assoc :initialized? true)
+                        (assoc :click-draw? true))]
         (rx/concat
          ;; Add shape to drawing state
          (rx/of #(assoc-in state [:workspace-drawing :object] shape))
@@ -101,4 +100,4 @@
                  #(update-drawing % (cond-> point snap-pixel? gpt/round) shift?)))
 
               (rx/take-until stoper))
-         (rx/of common/handle-finish-drawing))))))
+         (rx/of (common/handle-finish-drawing)))))))

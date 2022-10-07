@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http
   (:require
@@ -12,7 +12,6 @@
    ["raw-body" :as raw-body]
    ["stream" :as stream]
    [app.common.logging :as l]
-   [app.common.spec :as us]
    [app.common.transit :as t]
    [app.config :as cf]
    [app.handlers :as handlers]
@@ -91,12 +90,13 @@
      (fn [{:keys [:response/body :response/status] :as exchange}]
        (cond
          (map? body)
-         (let [data (t/encode-str body {:type :json-verbose})]
+         (let [data (t/encode-str body {:type :json-verbose})
+               size (js/Buffer.byteLength data "utf-8")]
            (-> exchange
                (assoc :response/body data)
                (assoc :response/status 200)
                (update :response/headers assoc "content-type" "application/transit+json")
-               (update :response/headers assoc "content-length" (count data))))
+               (update :response/headers assoc "content-length" size)))
 
          (and (nil? body)
               (= 200 status))
@@ -125,6 +125,16 @@
     (let [token (.get ^js cookies cookie-name)]
       (handler (cond-> exchange token (assoc :request/auth-token token))))))
 
+(defn- wrap-health
+  "Add /healthz entry point intercept."
+  [handler]
+  (fn [{:keys [:request/path] :as exchange}]
+    (if (= path "/readyz")
+      (assoc exchange
+             :response/status 200
+             :response/body "OK")
+      (handler exchange))))
+
 (defn- create-adapter
   [handler]
   (fn [req res]
@@ -150,6 +160,7 @@
 (defn init
   []
   (let [handler (-> handlers/handler
+                    (wrap-health)
                     (wrap-auth "auth-token")
                     (wrap-response-format)
                     (wrap-params)

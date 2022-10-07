@@ -2,27 +2,22 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.renderer.pdf
   "A pdf renderer."
   (:require
-   ["path" :as path]
    [app.browser :as bw]
    [app.common.data.macros :as dm]
-   [app.common.exceptions :as ex :include-macros true]
    [app.common.logging :as l]
-   [app.common.spec :as us]
    [app.common.uri :as u]
    [app.config :as cf]
    [app.util.mime :as mime]
    [app.util.shell :as sh]
-   [cuerdas.core :as str]
-   [cljs.spec.alpha :as s]
    [promesa.core :as p]))
 
 (defn render
-  [{:keys [file-id page-id token scale type uri objects] :as params} on-object]
+  [{:keys [file-id page-id token scale type objects] :as params} on-object]
   (letfn [(prepare-options [uri]
             #js {:screen #js {:width bw/default-viewport-width
                               :height bw/default-viewport-height}
@@ -44,8 +39,7 @@
 
           (render-object [page base-uri {:keys [id] :as object}]
             (p/let [uri  (prepare-uri base-uri id)
-                    tmp  (sh/mktmpdir! "pdf-render")
-                    path (path/join tmp (str/concat id (mime/get-extension type)))]
+                    path (sh/tempfile :prefix "penpot.tmp.render.pdf." :suffix (mime/get-extension type))]
               (l/info :uri uri)
               (bw/nav! page uri)
               (p/let [dom (bw/select page (dm/str "#screenshot-" id))]
@@ -58,11 +52,10 @@
           (render [base-uri page]
             (p/loop [objects (seq objects)]
               (when-let [object (first objects)]
-                (p/let [uri  (prepare-uri base-uri (:id object))
-                        path (render-object page base-uri object)]
+                (p/let [path (render-object page base-uri object)]
                   (on-object (assoc object :path path))
                   (p/recur (rest objects))))))]
 
-    (let [base-uri (or uri (cf/get :public-uri))]
+    (let [base-uri (cf/get :public-uri)]
       (bw/exec! (prepare-options base-uri)
                 (partial render base-uri)))))

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.path.tools
   (:require
@@ -76,7 +76,7 @@
 
 (defn make-curve-point
   "Changes the content to make the point a 'curve'. The handlers will be positioned
-  in the same vector that results from te previous->next points but with fixed length."
+  in the same vector that results from the previous->next points but with fixed length."
   [content point]
 
   (let [indices (upc/point-indices content point)

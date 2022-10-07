@@ -2,17 +2,15 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.browser
   (:require
    ["generic-pool" :as gp]
    ["generic-pool/lib/errors" :as gpe]
    ["playwright" :as pw]
-   [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.logging :as l]
-   [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.util.object :as obj]
    [promesa.core :as p]))

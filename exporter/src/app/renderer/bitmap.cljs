@@ -2,29 +2,22 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.renderer.bitmap
   "A bitmap renderer."
   (:require
-   ["path" :as path]
    [app.browser :as bw]
-   [app.common.data :as d]
-   [app.common.data.macros :as dm]
-   [app.common.exceptions :as ex]
    [app.common.logging :as l]
-   [app.common.pages :as cp]
-   [app.common.spec :as us]
    [app.common.uri :as u]
    [app.config :as cf]
    [app.util.mime :as mime]
    [app.util.shell :as sh]
-   [cljs.spec.alpha :as s]
    [cuerdas.core :as str]
    [promesa.core :as p]))
 
 (defn render
-  [{:keys [file-id page-id token scale type uri objects] :as params} on-object]
+  [{:keys [file-id page-id token scale type objects] :as params} on-object]
   (letfn [(prepare-options [uri]
             #js {:screen #js {:width bw/default-viewport-width
                               :height bw/default-viewport-height}
@@ -36,9 +29,8 @@
                  :userAgent bw/default-user-agent})
 
           (render-object [page {:keys [id] :as object}]
-            (p/let [tmpdir (sh/mktmpdir! "bitmap-render")
-                    path   (path/join tmpdir (str/concat id (mime/get-extension type)))
-                    node   (bw/select page (str/concat "#screenshot-" id))]
+            (p/let [path (sh/tempfile :prefix "penpot.tmp.render.bitmap." :suffix (mime/get-extension type))
+                    node (bw/select page (str/concat "#screenshot-" id))]
               (bw/wait-for node)
               (case type
                 :png  (bw/screenshot node {:omit-background? true :type type :path path})
@@ -61,7 +53,7 @@
                     :page-id page-id
                     :object-id (mapv :id objects)
                     :route "objects"}
-            uri    (-> (or uri (cf/get :public-uri))
+            uri    (-> (cf/get :public-uri)
                        (assoc :path "/render.html")
                        (assoc :query (u/map->query-string params)))]
       (bw/exec! (prepare-options uri) (partial render uri)))))

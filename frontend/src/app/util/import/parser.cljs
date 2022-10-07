@@ -2,14 +2,15 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.import.parser
   (:require
    [app.common.data :as d]
+   [app.common.data.macros :as dm]
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
-   [app.common.spec.interactions :as cti]
+   [app.common.types.shape.interactions :as ctsi]
    [app.common.uuid :as uuid]
    [app.util.color :as uc]
    [app.util.json :as json]
@@ -213,16 +214,29 @@
            (reduce add-attrs node-attrs))
 
       (= type :frame)
-      (let [;; The nodes with the "frame-background" class can have some anidation depending on the strokes they have
+      (let [;; Old .penpot files doesn't have "g" nodes. They have a clipPath reference as a node attribute
+            to-url #(dm/str "url(#" % ")")
+            frame-clip-rect-node  (->> (find-all-nodes node :defs)
+                                   (mapcat #(find-all-nodes % :clipPath))
+                                   (filter #(= (to-url (:id (:attrs %))) (:clip-path node-attrs)))
+                                   (mapcat #(find-all-nodes % #{:rect :path}))
+                                   (first))
+
+            ;; The nodes with the "frame-background" class can have some anidation depending on the strokes they have
             g-nodes    (find-all-nodes node :g)
             defs-nodes (flatten (map #(find-all-nodes % :defs) g-nodes))
             gg-nodes   (flatten (map #(find-all-nodes % :g) g-nodes))
+
+
             rect-nodes (flatten [[(find-all-nodes node :rect)]
                                  (map #(find-all-nodes % #{:rect :path}) defs-nodes)
                                  (map #(find-all-nodes % #{:rect :path}) g-nodes)
                                  (map #(find-all-nodes % #{:rect :path}) gg-nodes)])
             svg-node (d/seek #(= "frame-background" (get-in % [:attrs :class])) rect-nodes)]
-        (merge (add-attrs {} (:attrs svg-node)) node-attrs))
+        (merge
+         (add-attrs {} (:attrs frame-clip-rect-node))
+         (add-attrs {} (:attrs svg-node))
+         node-attrs))
 
       (= type :svg-raw)
       (let [svg-content (get-data node :penpot:svg-content)
@@ -386,7 +400,8 @@
         component-id          (get-meta node :component-id uuid/uuid)
         component-file        (get-meta node :component-file uuid/uuid)
         shape-ref             (get-meta node :shape-ref uuid/uuid)
-        component-root?       (get-meta node :component-root str->bool)]
+        component-root?       (get-meta node :component-root str->bool)
+        main-instance?        (get-meta node :main-instance str->bool)]
 
     (cond-> props
       (some? stroke-color-ref-id)
@@ -400,6 +415,9 @@
       component-root?
       (assoc :component-root? component-root?)
 
+      main-instance?
+      (assoc :main-instance? main-instance?)
+
       (some? shape-ref)
       (assoc :shape-ref shape-ref))))
 
@@ -407,7 +425,6 @@
   [props node svg-data]
 
   (let [fill (:fill svg-data)
-        hide-fill-on-export      (get-meta node :hide-fill-on-export str->bool)
         fill-color-ref-id        (get-meta node :fill-color-ref-id uuid/uuid)
         fill-color-ref-file      (get-meta node :fill-color-ref-file uuid/uuid)
         meta-fill-color          (get-meta node :fill-color)
@@ -440,9 +457,6 @@
       (uc/hex? fill)
       (assoc :fill-color fill
              :fill-opacity (-> svg-data (:fill-opacity "1") d/parse-double))
-
-      (some? hide-fill-on-export)
-      (assoc :hide-fill-on-export hide-fill-on-export)
 
       (some? fill-color-ref-id)
       (assoc :fill-color-ref-id fill-color-ref-id
@@ -779,10 +793,14 @@
           :content node-content}))))
 
 (defn add-frame-data [props node]
-  (let [grids (parse-grids node)]
-    (cond-> props
-      (d/not-empty? grids)
-      (assoc :grids grids))))
+  (let [grids (parse-grids node)
+        show-content (get-meta node :show-content str->bool)
+        hide-in-viewer (get-meta node :hide-in-viewer str->bool)]
+    (-> props
+        (assoc :show-content show-content)
+        (assoc :hide-in-viewer hide-in-viewer)
+        (cond-> (d/not-empty? grids)
+          (assoc :grids grids)))))
 
 (defn has-image?
   [node]
@@ -811,7 +829,7 @@
             :attrs)
         image-data (get-svg-data :image node)
         svg-data (or image-data pattern-data)]
-    (:xlink:href svg-data)))
+    (or (:href svg-data) (:xlink:href svg-data))))
 
 (defn get-image-fill
   [node]
@@ -870,6 +888,8 @@
           (assoc :fills (parse-fills node svg-data))
           (assoc :strokes (parse-strokes node svg-data))
 
+          (assoc :hide-fill-on-export      (get-meta node :hide-fill-on-export str->bool))
+
           (cond-> (= :svg-raw type)
             (add-svg-content node))
 
@@ -923,17 +943,17 @@
                  (let [interaction {:event-type  (get-meta node :event-type keyword)
                                     :action-type (get-meta node :action-type keyword)}]
                    (cond-> interaction
-                     (cti/has-delay interaction)
+                     (ctsi/has-delay interaction)
                      (assoc :delay (get-meta node :delay d/parse-double))
 
-                     (cti/has-destination interaction)
+                     (ctsi/has-destination interaction)
                      (assoc :destination     (get-meta node :destination uuid/uuid)
                             :preserve-scroll (get-meta node :preserve-scroll str->bool))
 
-                     (cti/has-url interaction)
+                     (ctsi/has-url interaction)
                      (assoc :url (get-meta node :url str))
 
-                     (cti/has-overlay-opts interaction)
+                     (ctsi/has-overlay-opts interaction)
                      (assoc :overlay-pos-type    (get-meta node :overlay-pos-type keyword)
                             :overlay-position    (gpt/point
                                                    (get-meta node :overlay-position-x d/parse-double)

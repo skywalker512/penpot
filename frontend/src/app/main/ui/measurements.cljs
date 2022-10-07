@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.measurements
   (:require
@@ -13,7 +13,7 @@
    [app.common.math :as mth]
    [app.common.uuid :as uuid]
    [app.main.ui.formats :as fmt]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;; ------------------------------------------------
 ;; CONSTANTS
@@ -240,16 +240,20 @@
 
     (when (seq selected-shapes)
       [:g.measurement-feedback {:pointer-events "none"}
-       [:& selection-guides {:selrect selected-selrect :bounds bounds :zoom zoom}]
+       [:& selection-guides {:selrect selected-selrect
+                             :bounds bounds
+                             :zoom zoom}]
        [:& size-display {:selrect selected-selrect :zoom zoom}]
 
        (if (or (not hover-shape) (not hover-selected-shape?))
          (when (and frame (not= uuid/zero (:id frame)))
-           [:g.hover-shapes
-            [:& distance-display {:from (:selrect frame)
-                                  :to selected-selrect
-                                  :zoom zoom
-                                  :bounds bounds-selrect}]])
+           (let [frame-bb (-> (:points frame) (gsh/points->selrect))]
+             [:g.hover-shapes
+              [:& selection-rect {:type :hover :selrect frame-bb :zoom zoom}]
+              [:& distance-display {:from frame-bb
+                                    :to selected-selrect
+                                    :zoom zoom
+                                    :bounds bounds-selrect}]]))
 
          [:g.hover-shapes
           [:& selection-rect {:type :hover :selrect hover-selrect :zoom zoom}]

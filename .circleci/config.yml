@@ -11,6 +11,7 @@ jobs:
       - image: cimg/redis:6.2.6
 
     working_directory: ~/repo
+    resource_class: large
 
     environment:
       # Customize the JVM maximum heap limit
@@ -25,6 +26,8 @@ jobs:
            - v1-dependencies-{{ checksum "backend/deps.edn" }}-{{ checksum "frontend/deps.edn"}}-{{ checksum "common/deps.edn"}}
            # fallback to using the latest cache if no exact match is found
            - v1-dependencies-
+
+      - run: cd .clj-kondo && cat config.edn
 
       - run:
           name: common lint
@@ -76,16 +79,16 @@ jobs:
           environment:
             PATH: /usr/local/nodejs/bin/:/usr/local/bin:/bin:/usr/bin
 
-      # - run:
-      #     working_directory: "./common"
-      #     name: common tests (cljs)
-      #     command: |
-      #       yarn install
-      #       yarn run compile-test
-      #       node target/test.js
-      # 
-      #     environment:
-      #       PATH: /usr/local/nodejs/bin/:/usr/local/bin:/bin:/usr/bin
+      - run:
+          working_directory: "./common"
+          name: common tests (cljs)
+          command: |
+            yarn install
+            yarn run compile-test
+            node target/test.js
+
+          environment:
+            PATH: /usr/local/nodejs/bin/:/usr/local/bin:/bin:/usr/bin
 
       - run:
           working_directory: "./common"

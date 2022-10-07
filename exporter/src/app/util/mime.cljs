@@ -2,13 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.mime
   "Mimetype and file extension helpers."
   (:refer-clojure :exclude [get])
   (:require
-   [app.common.data :as d]
    [cljs.core :as c]))
 
 (defn get-extension
@@ -20,7 +19,7 @@
     :pdf  ".pdf"
     :zip  ".zip"))
 
-(defn- get
+(defn get
   [type]
   (case type
     :zip  "application/zip"

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.rect
   (:require
@@ -10,14 +10,14 @@
    [app.main.ui.shapes.attrs :as attrs]
    [app.main.ui.shapes.custom-stroke :refer [shape-custom-strokes]]
    [app.util.object :as obj]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc rect-shape
   {::mf/wrap-props false}
   [props]
   (let [shape (unchecked-get props "shape")
         {:keys [x y width height]} shape
-        transform (gsh/transform-matrix shape)
+        transform (gsh/transform-str shape)
 
         props (-> (attrs/extract-style-attrs shape)
                   (obj/merge!

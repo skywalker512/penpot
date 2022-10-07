@@ -10,10 +10,12 @@
    [app.common.geom.matrix :as gmt]
    [app.common.geom.shapes :as gsh]
    [app.common.geom.shapes.path :as gsp]
+   [app.common.geom.shapes.text :as gsht]
    [app.common.logging :as l]
    [app.common.math :as mth]
    [app.common.pages :as cp]
    [app.common.pages.helpers :as cph]
+   [app.common.types.shape :as cts]
    [app.common.uuid :as uuid]
    [cuerdas.core :as str]))
 
@@ -83,7 +85,7 @@
 
           (fix-empty-points [shape]
             (let [shape (cond-> shape
-                          (empty? (:selrect shape)) (cp/setup-rect-selrect))]
+                          (empty? (:selrect shape)) (cts/setup-rect-selrect))]
               (cond-> shape
                 (empty? (:points shape))
                 (assoc :points (gsh/rect->points (:selrect shape))))))
@@ -392,6 +394,37 @@
             (cond-> object
               (affected-object? object)
               (assoc :fills [])))
+
+          (update-container [container]
+            (update container :objects d/update-vals update-object))]
+
+    (-> data
+        (update :pages-index d/update-vals update-container)
+        (update :components d/update-vals update-container))))
+
+;;Remove position-data to solve a bug with the text positioning
+(defmethod migrate 18
+  [data]
+  (letfn [(update-object [object]
+            (cond-> object
+              (cph/text-shape? object)
+              (dissoc :position-data)))
+
+          (update-container [container]
+            (update container :objects d/update-vals update-object))]
+
+    (-> data
+        (update :pages-index d/update-vals update-container)
+        (update :components d/update-vals update-container))))
+
+(defmethod migrate 19
+  [data]
+  (letfn [(update-object [object]
+            (cond-> object
+              (and (cph/text-shape? object)
+                   (d/not-empty? (:position-data object))
+                   (not (gsht/overlaps-position-data? object (:position-data object))))
+              (dissoc :position-data)))
 
           (update-container [container]
             (update container :objects d/update-vals update-object))]

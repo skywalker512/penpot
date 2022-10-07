@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.services-files-test
   (:require
@@ -32,7 +32,8 @@
                   :project-id proj-id
                   :id file-id
                   :name "foobar"
-                  :is-shared false}
+                  :is-shared false
+                  :components-v2 true}
             out (th/mutation! data)]
 
         ;; (th/print-result! out)
@@ -71,7 +72,8 @@
     (t/testing "query single file without users"
       (let [data {::th/type :file
                   :profile-id (:id prof)
-                  :id file-id}
+                  :id file-id
+                  :components-v2 true}
             out  (th/query! data)]
 
         ;; (th/print-result! out)
@@ -95,7 +97,8 @@
     (t/testing "query single file after delete"
       (let [data {::th/type :file
                   :profile-id (:id prof)
-                  :id file-id}
+                  :id file-id
+                  :components-v2 true}
             out (th/query! data)]
 
         ;; (th/print-result! out)
@@ -143,6 +146,7 @@
                           :session-id (uuid/random)
                           :profile-id profile-id
                           :revn revn
+                          :components-v2 true
                           :changes changes}
                   out    (th/mutation! params)]
               (t/is (nil? (:error out)))
@@ -171,6 +175,7 @@
                       :id shid
                       :parent-id uuid/zero
                       :frame-id uuid/zero
+                      :components-v2 true
                       :obj {:id shid
                             :name "image"
                             :frame-id uuid/zero
@@ -178,7 +183,7 @@
                             :type :image
                             :metadata {:id (:id fmo1)}}}]})]
 
-      ;; Check that reference storage objets on filemediaobjects
+      ;; Check that reference storage objects on filemediaobjects
       ;; are the same because of deduplication feature.
       (t/is (= (:media-id fmo1) (:media-id fmo2)))
       (t/is (= (:thumbnail-id fmo1) (:thumbnail-id fmo2)))
@@ -187,23 +192,18 @@
       ;; freeze because of the deduplication (we have uploaded 2 times
       ;; 2 two same files).
       (let [task (:app.storage/gc-touched-task th/*system*)
-            res  (task {})]
-
+            res  (task {:min-age (dt/duration 0)})]
         (t/is (= 2 (:freeze res)))
         (t/is (= 0 (:delete res))))
 
-      ;; run the task immediately
+      ;; run the file-gc task immediately without forced min-age
       (let [task  (:app.tasks.file-gc/handler th/*system*)
             res   (task {})]
         (t/is (= 0 (:processed res))))
 
-      ;; make the file eligible for GC waiting 300ms (configured
-      ;; timeout for testing)
-      (th/sleep 300)
-
       ;; run the task again
       (let [task  (:app.tasks.file-gc/handler th/*system*)
-            res   (task {})]
+            res   (task {:min-age (dt/duration 0)})]
         (t/is (= 1 (:processed res))))
 
       ;; retrieve file and check trimmed attribute
@@ -220,22 +220,36 @@
       (t/is (some? @(sto/get-object storage (:media-id fmo1))))
       (t/is (some? @(sto/get-object storage (:thumbnail-id fmo1))))
 
-      ;; now, we have deleted the unused file-media-object, if we
-      ;; execute the touched-gc task, we should see that two of them
-      ;; are marked to be deleted.
+      ;; proceed to remove usage of the file
+      (update-file {:file-id (:id file)
+                    :profile-id (:id profile)
+                    :revn 0
+                    :changes [{:type :del-obj
+                               :page-id (first (get-in file [:data :pages]))
+                               :id shid}]})
+
+      ;; Now, we have deleted the usage of pointers to the
+      ;; file-media-objects, if we paste file-gc, they should be marked
+      ;; as deleted.
+      (let [task  (:app.tasks.file-gc/handler th/*system*)
+            res   (task {:min-age (dt/duration 0)})]
+        (t/is (= 1 (:processed res))))
+
+      ;; Now that file-gc have deleted the file-media-object usage,
+      ;; lets execute the touched-gc task, we should see that two of
+      ;; them are marked to be deleted.
       (let [task (:app.storage/gc-touched-task th/*system*)
-            res  (task {})]
-        (t/is (= 2 (:freeze res)))
-        (t/is (= 0 (:delete res))))
+            res  (task {:min-age (dt/duration 0)})]
+        (t/is (= 0 (:freeze res)))
+        (t/is (= 2 (:delete res))))
 
       ;; Finally, check that some of the objects that are marked as
       ;; deleted we are unable to retrieve them using standard storage
       ;; public api.
-      (t/is (some? @(sto/get-object storage (:media-id fmo2))))
-      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo2))))
-      (t/is (some? @(sto/get-object storage (:media-id fmo1))))
-      (t/is (some? @(sto/get-object storage (:thumbnail-id fmo1))))
-
+      (t/is (nil? @(sto/get-object storage (:media-id fmo2))))
+      (t/is (nil? @(sto/get-object storage (:thumbnail-id fmo2))))
+      (t/is (nil? @(sto/get-object storage (:media-id fmo1))))
+      (t/is (nil? @(sto/get-object storage (:thumbnail-id fmo1))))
       )))
 
 (t/deftest permissions-checks-creating-file
@@ -246,7 +260,8 @@
                   :profile-id (:id profile2)
                   :project-id (:default-project-id profile1)
                   :name "foobar"
-                  :is-shared false}
+                  :is-shared false
+                  :components-v2 true}
         out      (th/mutation! data)
         error    (:error out)]
 
@@ -353,8 +368,8 @@
                                      :profile-id (:id profile1)})]
     ;; file is not deleted because it does not meet all
     ;; conditions to be deleted.
-    (let [result (task {:max-age (dt/duration 0)})]
-      (t/is (nil? result)))
+    (let [result (task {:min-age (dt/duration 0)})]
+      (t/is (= 0 (:processed result))))
 
     ;; query the list of files
     (let [data {::th/type :project-files
@@ -384,8 +399,8 @@
         (t/is (= 0 (count result)))))
 
     ;; run permanent deletion (should be noop)
-    (let [result (task {:max-age (dt/duration {:minutes 1})})]
-      (t/is (nil? result)))
+    (let [result (task {:min-age (dt/duration {:minutes 1})})]
+      (t/is (= 0 (:processed result))))
 
     ;; query the list of file libraries of a after hard deletion
     (let [data {::th/type :file-libraries
@@ -398,8 +413,8 @@
         (t/is (= 0 (count result)))))
 
     ;; run permanent deletion
-    (let [result (task {:max-age (dt/duration 0)})]
-      (t/is (nil? result)))
+    (let [result (task {:min-age (dt/duration 0)})]
+      (t/is (= 1 (:processed result))))
 
     ;; query the list of file libraries of a after hard deletion
     (let [data {::th/type :file-libraries
@@ -462,6 +477,7 @@
     (th/update-file* {:file-id (:id file)
                       :profile-id (:id prof)
                       :revn 0
+                      :components-v2 true
                       :changes changes})
 
     (t/testing "RPC page query (rendering purposes)"
@@ -469,7 +485,8 @@
       ;; Query :page RPC method without passing page-id
       (let [data {::th/type :page
                   :profile-id (:id prof)
-                  :file-id (:id file)}
+                  :file-id (:id file)
+                  :components-v2 true}
             {:keys [error result] :as out} (th/query! data)]
 
         ;; (th/print-result! out)
@@ -485,7 +502,8 @@
       (let [data {::th/type :page
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :page-id page-id}
+                  :page-id page-id
+                  :components-v2 true}
             {:keys [error result] :as out} (th/query! data)]
         ;; (th/print-result! out)
         (t/is (map? result))
@@ -501,7 +519,8 @@
                   :profile-id (:id prof)
                   :file-id (:id file)
                   :page-id page-id
-                  :object-id frame1-id}
+                  :object-id frame1-id
+                  :components-v2 true}
             {:keys [error result] :as out} (th/query! data)]
         ;; (th/print-result! out)
         (t/is (map? result))
@@ -516,18 +535,21 @@
       (let [data {::th/type :page
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :object-id frame1-id}
-            {:keys [error result] :as out} (th/query! data)]
-        ;; (th/print-result! out)
-        (t/is (= :validation (th/ex-type error)))
-        (t/is (= :spec-validation (th/ex-code error)))))
+                  :object-id frame1-id
+                  :components-v2 true}
+            out  (th/query! data)]
+
+        (t/is (not (th/success? out)))
+        (let [{:keys [type code]} (-> out :error ex-data)]
+          (t/is (= :validation type))
+          (t/is (= :spec-validation code)))))
 
     (t/testing "RPC :file-data-for-thumbnail"
       ;; Insert a thumbnail data for the frame-id
       (let [data {::th/type :upsert-file-object-thumbnail
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :object-id frame1-id
+                  :object-id (str page-id frame1-id)
                   :data "random-data-1"}
 
             {:keys [error result] :as out} (th/mutation! data)]
@@ -537,7 +559,8 @@
       ;; Check the result
       (let [data {::th/type :file-data-for-thumbnail
                   :profile-id (:id prof)
-                  :file-id (:id file)}
+                  :file-id (:id file)
+                  :components-v2 true}
             {:keys [error result] :as out} (th/query! data)]
         ;; (th/print-result! out)
         (t/is (map? result))
@@ -553,7 +576,7 @@
       (let [data {::th/type :upsert-file-object-thumbnail
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :object-id frame1-id
+                  :object-id (str page-id frame1-id)
                   :data nil}
             {:keys [error result] :as out} (th/mutation! data)]
         (t/is (nil? error))
@@ -562,7 +585,8 @@
       ;; Check the result
       (let [data {::th/type :file-data-for-thumbnail
                   :profile-id (:id prof)
-                  :file-id (:id file)}
+                  :file-id (:id file)
+                  :components-v2 true}
             {:keys [error result] :as out} (th/query! data)]
         ;; (th/print-result! out)
         (t/is (map? result))
@@ -579,7 +603,7 @@
       (let [data {::th/type :upsert-file-object-thumbnail
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :object-id frame1-id
+                  :object-id (str page-id frame1-id)
                   :data "new-data"}
             {:keys [error result] :as out} (th/mutation! data)]
         (t/is (nil? error))
@@ -590,7 +614,7 @@
 
       ;; run the task again
       (let [task  (:app.tasks.file-gc/handler th/*system*)
-            res   (task {})]
+            res   (task {:min-age (dt/duration 0)})]
         (t/is (= 1 (:processed res))))
 
       ;; check that object thumbnails are still here
@@ -602,7 +626,7 @@
       (let [data {::th/type :upsert-file-object-thumbnail
                   :profile-id (:id prof)
                   :file-id (:id file)
-                  :object-id (uuid/next)
+                  :object-id (str page-id (uuid/next))
                   :data "new-data-2"}
             {:keys [error result] :as out} (th/mutation! data)]
         (t/is (nil? error))
@@ -617,7 +641,7 @@
 
       ;; run the task again
       (let [task  (:app.tasks.file-gc/handler th/*system*)
-            res   (task {})]
+            res   (task {:min-age (dt/duration 0)})]
         (t/is (= 1 (:processed res))))
 
       ;; check that the unknown frame thumbnail is deleted
@@ -701,13 +725,13 @@
 
       ;; run the task again
       (let [task  (:app.tasks.file-gc/handler th/*system*)
-            res   (task {})]
+            res   (task {:min-age (dt/duration 0)})]
         (t/is (= 1 (:processed res))))
 
       ;; Then query the specific revn
       (let [{:keys [result error] :as out} (th/query! (assoc data :revn 1))]
-        (t/is (= :not-found (th/ex-type error)))
-        (t/is (= :file-thumbnail-not-found (th/ex-code error)))))
+        (t/is (th/ex-of-type? error :not-found))
+        (t/is (th/ex-of-code? error :file-thumbnail-not-found))))
     ))
 
 

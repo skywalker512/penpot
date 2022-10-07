@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.texts
   (:require
@@ -13,9 +13,11 @@
    [app.common.math :as mth]
    [app.common.pages.helpers :as cph]
    [app.common.text :as txt]
+   [app.common.uuid :as uuid]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
    [app.main.data.workspace.selection :as dws]
+   [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.data.workspace.undo :as dwu]
    [app.util.router :as rt]
@@ -62,18 +64,22 @@
                           (ted/get-editor-current-content))]
           (if (ted/content-has-text? content)
             (let [content (d/merge (ted/export-content content)
-                                   (dissoc (:content shape) :children))]
+                                   (dissoc (:content shape) :children))
+                  modifiers (get-in state [:workspace-text-modifier id])]
               (rx/merge
                (rx/of (update-editor-state shape nil))
                (when (and (not= content (:content shape))
                           (some? (:current-page-id state)))
                  (rx/of
-                  (dch/update-shapes [id] #(assoc % :content content))
+                  (dch/update-shapes [id] (fn [shape]
+                                            (-> shape
+                                                (assoc :content content)
+                                                (merge modifiers))))
                   (dwu/commit-undo-transaction)))))
 
             (when (some? id)
               (rx/of (dws/deselect-shape id)
-                     (dwc/delete-shapes #{id})))))))))
+                     (dwsh/delete-shapes #{id})))))))))
 
 (defn initialize-editor-state
   [{:keys [id content] :as shape} decorator]
@@ -186,8 +192,8 @@
             update-fn
             (fn [shape]
               (if (some? (:content shape))
-                (update-text-content shape txt/is-root-node? attrs/merge attrs)
-                (assoc shape :content (attrs/merge {:type "root"} attrs))))
+                (update-text-content shape txt/is-root-node? d/txt-merge attrs)
+                (assoc shape :content (d/txt-merge {:type "root"} attrs))))
 
             shape-ids (cond (cph/text-shape? shape)  [id]
                             (cph/group-shape? shape) (cph/get-children-ids objects id))]
@@ -239,18 +245,19 @@
               shape-ids (cond
                           (cph/text-shape? shape)  [id]
                           (cph/group-shape? shape) (cph/get-children-ids objects id))]
-          (rx/of (dch/update-shapes shape-ids #(update-text-content % update-node? attrs/merge attrs))))))))
+          (rx/of (dch/update-shapes shape-ids #(update-text-content % update-node? d/txt-merge attrs))))))))
 
 (defn migrate-node
   [node]
   (let [color-attrs (select-keys node [:fill-color :fill-opacity :fill-color-ref-id :fill-color-ref-file :fill-color-gradient])]
     (cond-> node
-      (d/not-empty? color-attrs)
-      (-> (dissoc :fill-color :fill-opacity :fill-color-ref-id :fill-color-ref-file :fill-color-gradient)
-          (assoc :fills [color-attrs]))
-
       (nil? (:fills node))
-      (assoc :fills (:fills txt/default-text-attrs)))))
+      (assoc :fills (:fills txt/default-text-attrs))
+
+      (and (d/not-empty? color-attrs) (nil? (:fills node)))
+      (-> (dissoc :fill-color :fill-opacity :fill-color-ref-id :fill-color-ref-file :fill-color-gradient)
+          (assoc :fills [color-attrs])))
+    ))
 
 (defn migrate-content
   [content]
@@ -302,7 +309,7 @@
           (assoc-in [:workspace-local :edition] (-> selected first :id)))))))
 
 (defn not-changed? [old-dim new-dim]
-  (> (mth/abs (- old-dim new-dim)) 0.1))
+  (> (mth/abs (- old-dim new-dim)) 1))
 
 (defn resize-text
   [id new-width new-height]
@@ -373,9 +380,65 @@
     (update [_ state]
       (update-in state [:workspace-text-modifier id] (fnil merge {}) props))))
 
+(defn clean-text-modifier
+  [id]
+  (ptk/reify ::clean-text-modifier
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (->> (rx/of #(update % :workspace-text-modifier dissoc id))
+           ;; We delay a bit the change so there is no weird transition to the user
+           (rx/delay 50)))))
+
 (defn remove-text-modifier
   [id]
   (ptk/reify ::remove-text-modifier
     ptk/UpdateEvent
     (update [_ state]
       (d/dissoc-in state [:workspace-text-modifier id]))))
+
+(defn commit-position-data
+  []
+  (ptk/reify ::commit-position-data
+    ptk/UpdateEvent
+    (update [_ state]
+      (let [ids (keys (::update-position-data state))]
+        (update state :workspace-text-modifiers #(apply dissoc % ids))))
+
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [position-data (::update-position-data state)]
+        (rx/concat
+         (rx/of (dch/update-shapes
+                 (keys position-data)
+                 (fn [shape]
+                   (-> shape
+                       (assoc :position-data (get position-data (:id shape)))))
+                 {:save-undo? false :reg-objects? false}))
+         (rx/of (fn [state]
+                  (dissoc state ::update-position-data-debounce ::update-position-data))))))))
+
+(defn update-position-data
+  [id position-data]
+
+  (let [start (uuid/next)]
+    (ptk/reify ::update-position-data
+      ptk/UpdateEvent
+      (update [_ state]
+        (let [state (assoc-in state [:workspace-text-modifier id :position-data] position-data)]
+          (if (nil? (::update-position-data-debounce state))
+            (assoc state ::update-position-data-debounce start)
+            (assoc-in state [::update-position-data id] position-data))))
+
+      ptk/WatchEvent
+      (watch [_ state stream]
+        (if (= (::update-position-data-debounce state) start)
+          (let [stopper (->> stream (rx/filter (ptk/type? :app.main.data.workspace/finalize)))]
+            (rx/merge
+             (->> stream
+                  (rx/filter (ptk/type? ::update-position-data))
+                  (rx/debounce 50)
+                  (rx/take 1)
+                  (rx/map #(commit-position-data))
+                  (rx/take-until stopper))
+             (rx/of (update-position-data id position-data))))
+          (rx/empty))))))

@@ -2,19 +2,20 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.worker.thumbnails
   (:require
    ["react-dom/server" :as rds]
    [app.common.uri :as u]
-   [app.config :as cfg]
+   [app.config :as cf]
    [app.main.fonts :as fonts]
    [app.main.render :as render]
    [app.util.http :as http]
    [app.worker.impl :as impl]
    [beicon.core :as rx]
-   [rumext.alpha :as mf]))
+   [debug :refer [debug?]]
+   [rumext.v2 :as mf]))
 
 (defn- handle-response
   [{:keys [body status] :as response}]
@@ -47,13 +48,14 @@
        (= :request-body-too-large code)))
 
 (defn- request-data-for-thumbnail
-  [file-id revn]
+  [file-id revn components-v2]
   (let [path    "api/rpc/query/file-data-for-thumbnail"
         params  {:file-id file-id
                  :revn revn
-                 :strip-frames-with-thumbnails true}
+                 :strip-frames-with-thumbnails true
+                 :components-v2 components-v2}
         request {:method :get
-                 :uri (u/join (cfg/get-public-uri) path)
+                 :uri (u/join @cf/public-uri path)
                  :credentials "include"
                  :query params}]
     (->> (http/send! request)
@@ -66,7 +68,7 @@
         params  {:file-id file-id
                  :revn revn}
         request {:method :get
-                 :uri (u/join (cfg/get-public-uri) path)
+                 :uri (u/join @cf/public-uri path)
                  :credentials "include"
                  :query params}]
 
@@ -79,10 +81,11 @@
   (let [objects (:objects page)
         frame   (some->> page :thumbnail-frame-id (get objects))
         element (if frame
-                  (mf/element render/frame-svg #js {:objects objects :frame frame})
-                  (mf/element render/page-svg #js {:data page :thumbnails? true}))]
-    {:data (rds/renderToStaticMarkup element)
-     :fonts @fonts/loaded
+                  (mf/element render/frame-svg #js {:objects objects :frame frame :show-thumbnails? true})
+                  (mf/element render/page-svg #js {:data page :thumbnails? true}))
+        data    (rds/renderToStaticMarkup element)]
+    {:data data
+     :fonts (into @fonts/loaded (map first) @fonts/loading)
      :file-id file-id
      :revn revn}))
 
@@ -94,7 +97,7 @@
                  :props {:fonts fonts}
                  :data data}
         request {:method :post
-                 :uri (u/join (cfg/get-public-uri) path)
+                 :uri (u/join @cf/public-uri path)
                  :credentials "include"
                  :body (http/transit-data params)}]
 
@@ -105,16 +108,19 @@
          (rx/map (constantly params)))))
 
 (defmethod impl/handler :thumbnails/generate
-  [{:keys [file-id revn] :as message}]
+  [{:keys [file-id revn components-v2] :as message}]
   (letfn [(on-result [{:keys [data props]}]
             {:data data
              :fonts (:fonts props)})
 
           (on-cache-miss [_]
-            (->> (request-data-for-thumbnail file-id revn)
+            (->> (request-data-for-thumbnail file-id revn components-v2)
                  (rx/map render-thumbnail)
                  (rx/mapcat persist-thumbnail)))]
 
-    (->> (request-thumbnail file-id revn)
-         (rx/catch not-found? on-cache-miss)
-         (rx/map on-result))))
+    (if (debug? :disable-thumbnail-cache)
+      (->> (request-data-for-thumbnail file-id revn components-v2)
+           (rx/map render-thumbnail))
+      (->> (request-thumbnail file-id revn)
+           (rx/catch not-found? on-cache-miss)
+           (rx/map on-result)))))

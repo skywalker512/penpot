@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main
   (:require
@@ -13,10 +13,11 @@
    [app.main.data.users :as du]
    [app.main.data.websocket :as ws]
    [app.main.errors]
-   [app.main.sentry :as sentry]
    [app.main.store :as st]
    [app.main.ui :as ui]
+   [app.main.ui.alert]
    [app.main.ui.confirm]
+   [app.main.ui.delete-shared]
    [app.main.ui.modal :refer [modal]]
    [app.main.ui.routes :as rt]
    [app.main.worker :as worker]
@@ -25,8 +26,9 @@
    [app.util.theme :as theme]
    [beicon.core :as rx]
    [debug]
+   [features]
    [potok.core :as ptk]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (log/initialize!)
 (log/set-level! :root :warn)
@@ -36,7 +38,7 @@
   (log/info :message "Welcome to penpot"
             :version (:full @cf/version)
             :build-date cf/build-date
-            :public-uri (str cf/public-uri)))
+            :public-uri (str @cf/public-uri)))
 
 (declare reinit)
 
@@ -72,7 +74,6 @@
 (defn ^:export init
   []
   (worker/init!)
-  (sentry/init!)
   (i18n/init! cf/translations)
   (theme/init! cf/themes)
   (init-ui)

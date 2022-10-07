@@ -2,13 +2,11 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.handlers.export-shapes
   (:require
-   ["path" :as path]
    [app.common.data :as d]
-   [app.common.exceptions :as exc]
    [app.common.logging :as l]
    [app.common.spec :as us]
    [app.handlers.resources :as rsc]
@@ -34,7 +32,6 @@
 (s/def ::scale ::us/number)
 (s/def ::suffix ::us/string)
 (s/def ::type ::us/keyword)
-(s/def ::uri ::us/uri)
 (s/def ::wait ::us/boolean)
 
 (s/def ::export
@@ -45,11 +42,11 @@
 
 (s/def ::params
   (s/keys :req-un [::exports ::profile-id]
-          :opt-un [::uri ::wait ::name]))
+          :opt-un [::wait ::name]))
 
 (defn handler
-  [{:keys [:request/auth-token] :as exchange} {:keys [exports uri] :as params}]
-  (let [exports (prepare-exports exports auth-token uri)]
+  [{:keys [:request/auth-token] :as exchange} {:keys [exports] :as params}]
+  (let [exports (prepare-exports exports auth-token)]
     (if (and (= 1 (count exports))
              (= 1 (count (-> exports first :objects))))
       (handle-single-export exchange (-> params
@@ -58,7 +55,7 @@
       (handle-multiple-export exchange (assoc params :exports exports)))))
 
 (defn- handle-single-export
-  [exchange {:keys [export wait uri profile-id name] :as params}]
+  [exchange {:keys [export wait profile-id name] :as params}]
   (let [topic       (str profile-id)
         resource    (rsc/create (:type export) (or name (:name export)))
 
@@ -80,7 +77,7 @@
                                              :name (:name resource)
                                              :status "ended"}))))
         on-error    (fn [cause]
-                      (l/error :hint "unexpected error happened on export multiple process"
+                      (l/error :hint "unexpected error on export multiple"
                                :cause cause)
                       (if wait
                         (p/rejected cause)
@@ -98,12 +95,10 @@
       (assoc exchange :response/body (dissoc resource :path)))))
 
 (defn- handle-multiple-export
-  [exchange {:keys [exports wait uri profile-id name] :as params}]
+  [exchange {:keys [exports wait profile-id name] :as params}]
   (let [resource    (rsc/create :zip (or name (-> exports first :name)))
         total       (count exports)
         topic       (str profile-id)
-
-        to-delete   (atom #{})
 
         on-progress (fn [{:keys [done]}]
                       (when-not wait
@@ -138,16 +133,15 @@
                                     :on-progress on-progress)
 
         append      (fn [{:keys [filename path] :as object}]
-                      (swap! to-delete conj path)
                       (rsc/add-to-zip! zip path filename))
 
         proc        (-> (p/do
                           (p/loop [exports (seq exports)]
                             (when-let [export (first exports)]
-                              (p/let [proc (rd/render export append)]
+                              (p/do
+                                (rd/render export append)
                                 (p/recur (rest exports)))))
                           (.finalize zip))
-                        (p/then (fn [_] (p/run! #(sh/rmdir! (path/dirname %)) @to-delete)))
                         (p/then (constantly resource))
                         (p/catch on-error))
         ]
@@ -185,7 +179,7 @@
   default-partition-size 50)
 
 (defn prepare-exports
-  [exports token uri]
+  [exports token]
   (letfn [(process-group [group]
             (sequence (comp (partition-all default-partition-size)
                             (map process-partition))
@@ -196,7 +190,6 @@
              :page-id (:page-id part1)
              :name    (:name part1)
              :token   token
-             :uri     uri
              :type    (:type part1)
              :scale   (:scale part1)
              :objects (mapv part-entry->object part)})

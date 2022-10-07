@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.text.styles
   (:require
@@ -21,7 +21,7 @@
                     :width  width
                     :fontFamily "sourcesanspro"
                     :display "flex"
-                    :whiteSpace "pre-wrap"}]
+                    :whiteSpace "break-spaces"}]
     (cond-> base
       (= valign "top")     (obj/set! "alignItems" "flex-start")
       (= valign "center")  (obj/set! "alignItems" "center")
@@ -50,7 +50,7 @@
         text-align  (:text-align data "start")
         base        #js {:fontSize (str (:font-size data (:font-size txt/default-text-attrs)) "px")
                          :lineHeight (:line-height data (:line-height txt/default-text-attrs))
-                         :margin "inherit"}]
+                         :margin 0}]
     (cond-> base
       (some? line-height)       (obj/set! "lineHeight" line-height)
       (some? text-align)        (obj/set! "textAlign" text-align))))
@@ -63,9 +63,10 @@
    (let [letter-spacing  (:letter-spacing data 0)
          text-decoration (:text-decoration data)
          text-transform  (:text-transform data)
-         line-height     (:line-height data 1.2)
 
-         font-id         (:font-id data (:font-id txt/default-text-attrs))
+         font-id         (or (:font-id data)
+                             (:font-id txt/default-text-attrs))
+
          font-variant-id (:font-variant-id data)
 
          font-size       (:font-size data)
@@ -80,35 +81,38 @@
 
          base            #js {:textDecoration text-decoration
                               :textTransform text-transform
-                              :lineHeight (or line-height "1.2")
                               :color (if show-text? text-color "transparent")
                               :caretColor (or text-color "black")
-                              :overflowWrap "initial"}
-
+                              :overflowWrap "initial"
+                              :lineBreak "auto"
+                              :whiteSpace "break-spaces"
+                              :textRendering "geometricPrecision"}
          fills
          (cond
            (some? (:fills data))
            (:fills data)
 
+           ;; DEPRECATED: still here for backward compatibility with
+           ;; old penpot files that still has a single color.
            (or (some? (:fill-color data))
                (some? (:fill-opacity data))
                (some? (:fill-color-gradient data)))
-           [(d/without-nils (select-keys data [:fill-color :fill-opacity :fill-color-gradient :fill-color-ref-id :fill-color-ref-file]))]
+           [(d/without-nils (select-keys data [:fill-color :fill-opacity :fill-color-gradient
+                                               :fill-color-ref-id :fill-color-ref-file]))]
 
            (nil? (:fills data))
            [{:fill-color "#000000" :fill-opacity 1}])
 
-
-         font (when (and (string? font-id) (pos? (alength font-id)))
-                (get fontsdb font-id))
+         font (some->> font-id (get fontsdb))
 
          [font-family font-style font-weight]
          (when (some? font)
-           (fonts/ensure-loaded! font-id)
            (let [font-variant (d/seek #(= font-variant-id (:id %)) (:variants font))]
              [(str/quote (or (:family font) (:font-family data)))
               (or (:style font-variant) (:font-style data))
-              (or (:weight font-variant) (:font-weight data))]))]
+              (or (:weight font-variant) (:font-weight data))]))
+
+         base (obj/set! base "--font-id" font-id)]
 
      (cond-> base
        (some? fills)
@@ -126,7 +130,4 @@
            (obj/set! "fontWeight" font-weight))
 
        (= grow-type :auto-width)
-       (obj/set! "whiteSpace" "pre")
-
-       (not= grow-type :auto-width)
-       (obj/set! "whiteSpace" "pre-wrap")))))
+       (obj/set! "whiteSpace" "pre")))))

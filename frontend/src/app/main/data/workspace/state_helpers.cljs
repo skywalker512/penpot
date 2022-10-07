@@ -2,19 +2,25 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.state-helpers
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
-   [app.common.pages.helpers :as cph]))
+   [app.common.geom.shapes :as gsh]
+   [app.common.pages.helpers :as cph]
+   [app.common.path.commands :as upc]))
 
 (defn lookup-page
   ([state]
    (lookup-page state (:current-page-id state)))
   ([state page-id]
    (get-in state [:workspace-data :pages-index page-id])))
+
+(defn lookup-data-objects
+  [data page-id]
+  (dm/get-in data [:pages-index page-id :objects]))
 
 (defn lookup-page-objects
   ([state]
@@ -50,6 +56,10 @@
              (filter selectable?)
              selected)))))
 
+(defn lookup-selected-raw
+  [state]
+  (dm/get-in state [:workspace-local :selected]))
+
 (defn lookup-selected
   ([state]
    (lookup-selected state nil))
@@ -59,6 +69,14 @@
    (let [objects  (lookup-page-objects state page-id)
          selected (dm/get-in state [:workspace-local :selected])]
      (process-selected-shapes objects selected options))))
+
+(defn lookup-shape
+  ([state id]
+   (lookup-shape state (:current-page-id state) id))
+
+  ([state page-id id]
+   (let [objects (lookup-page-objects state page-id)]
+     (get objects id))))
 
 (defn lookup-shapes
   ([state ids]
@@ -94,3 +112,26 @@
     (-> (:workspace-libraries state)
         (assoc id {:id id
                    :data local}))))
+
+(defn- set-content-modifiers [state]
+  (fn [id shape]
+    (let [content-modifiers (dm/get-in state [:workspace-local :edit-path id :content-modifiers])]
+      (if (some? content-modifiers)
+        (update shape :content upc/apply-content-modifiers content-modifiers)
+        shape))))
+
+(defn select-bool-children
+  [parent-id state]
+  (let [objects   (lookup-page-objects state)
+        selected  (lookup-selected-raw state)
+        modifiers (:workspace-modifiers state)
+
+        children-ids (cph/get-children-ids objects parent-id)
+        selected-children (into [] (filter selected) children-ids)
+
+        modifiers    (select-keys modifiers selected-children)
+        children     (select-keys objects children-ids)]
+
+    (as-> children $
+      (gsh/merge-modifiers $ modifiers)
+      (d/mapm (set-content-modifiers state) $))))

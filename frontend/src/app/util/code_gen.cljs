@@ -2,12 +2,13 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.code-gen
   (:require
    [app.common.data :as d]
    [app.common.text :as txt]
+   [app.main.ui.formats :as fmt]
    [app.util.color :as uc]
    [cuerdas.core :as str]))
 
@@ -108,7 +109,7 @@
                    (every? #(or (nil? %) (= % 0)) value)
                    (or (nil? value) (= value 0))))
 
-         default-format (fn [value] (str value "px"))
+         default-format (fn [value] (str (fmt/format-pixels value)))
          format-property (fn [prop]
                            (let [css-prop (or (prop to-prop) (name prop))
                                  format-fn (or (prop format) default-format)

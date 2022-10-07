@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.tasks.telemetry
   "A task that is responsible to collect anonymous statistical
@@ -25,7 +25,8 @@
 
 (declare get-stats)
 (declare send!)
-(declare get-subscriptions)
+(declare get-subscriptions-newsletter-updates)
+(declare get-subscriptions-newsletter-news)
 
 (s/def ::http-client fn?)
 (s/def ::version ::us/string)
@@ -40,7 +41,8 @@
 (defmethod ig/init-key ::handler
   [_ {:keys [pool sprops version] :as cfg}]
   (fn [{:keys [send? enabled?] :or {send? true enabled? false}}]
-    (let [subs     (get-subscriptions pool)
+    (let [subs     {:newsletter-updates (get-subscriptions-newsletter-updates pool)
+                    :newsletter-news (get-subscriptions-newsletter-news pool)}
           enabled? (or enabled?
                        (contains? cf/flags :telemetry)
                        (cf/get :telemetry-enabled))
@@ -90,9 +92,15 @@
                 :response-status (:status response)
                 :response-body (:body response)))))
 
-(defn- get-subscriptions
+(defn- get-subscriptions-newsletter-updates
   [conn]
-  (let [sql "select email from profile where props->>'~:newsletter-subscribed' = 'true'"]
+  (let [sql "select email from profile where props->>'~:newsletter-updates' = 'true'"]
+    (->> (db/exec! conn [sql])
+         (mapv :email))))
+
+(defn- get-subscriptions-newsletter-news
+  [conn]
+  (let [sql "select email from profile where props->>'~:newsletter-news' = 'true'"]
     (->> (db/exec! conn [sql])
          (mapv :email))))
 
@@ -199,6 +207,7 @@
                   "taiga"
                   (cf/get :telemetry-referer))]
     (-> {:referer        referer
+         :public-uri     (cf/get :public-uri)
          :total-teams    (retrieve-num-teams conn)
          :total-projects (retrieve-num-projects conn)
          :total-files    (retrieve-num-files conn)

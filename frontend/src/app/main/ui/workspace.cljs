@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace
   (:require
@@ -11,6 +11,7 @@
    [app.main.data.messages :as msg]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.persistence :as dwp]
+   [app.main.features :as features]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.context :as ctx]
@@ -32,7 +33,7 @@
    [app.util.object :as obj]
    [debug :refer [debug?]]
    [okulary.core :as l]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;; --- Workspace
 
@@ -80,7 +81,8 @@
        [:*
         [:& left-toolbar {:layout layout}]
         (if (:collapse-left-sidebar layout)
-          [:button.collapse-sidebar.collapsed {:on-click #(st/emit! (dw/toggle-layout-flag :collapse-left-sidebar))}
+          [:button.collapse-sidebar.collapsed {:on-click #(st/emit! (dw/toggle-layout-flag :collapse-left-sidebar))
+                                               :aria-label (tr "workspace.sidebar.expand")}
            i/arrow-slide]
           [:& left-sidebar {:layout layout}])
         [:& right-sidebar {:section options-mode
@@ -119,6 +121,8 @@
         layout  (mf/deref refs/workspace-layout)
         wglobal (mf/deref refs/workspace-global)
 
+        components-v2 (features/use-feature :components-v2)
+
         background-color (:background-color wglobal)]
 
     ;; Setting the layout preset by its name
@@ -145,23 +149,22 @@
      [:& (mf/provider ctx/current-team-id) {:value (:team-id project)}
       [:& (mf/provider ctx/current-project-id) {:value (:id project)}
        [:& (mf/provider ctx/current-page-id) {:value page-id}
-        [:section#workspace {:style {:background-color background-color}}
-         (when (not (:hide-ui layout))
-           [:& header {:file file
-                       :page-id page-id
-                       :project project
-                       :layout layout}])
+        [:& (mf/provider ctx/components-v2) {:value components-v2}
+         [:section#workspace {:style {:background-color background-color}}
+          (when (not (:hide-ui layout))
+            [:& header {:file file
+                        :page-id page-id
+                        :project project
+                        :layout layout}])
 
-         [:& context-menu]
+          [:& context-menu]
 
-         (if (and (and file project)
-                  (:initialized file))
-           [:& workspace-page {:key (dm/str "page-" page-id)
-                               :page-id page-id
-                               :file file
-                               :wglobal wglobal
-                               :layout layout}]
-           [:& workspace-loader])]]]]]))
-
-
+          (if (and (and file project)
+                   (:initialized file))
+            [:& workspace-page {:key (dm/str "page-" page-id)
+                                :page-id page-id
+                                :file file
+                                :wglobal wglobal
+                                :layout layout}]
+            [:& workspace-loader])]]]]]]))
 

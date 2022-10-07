@@ -2,18 +2,15 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.config
   (:refer-clojure :exclude [get])
   (:require
-   ["fs" :as fs]
    ["process" :as process]
-   [app.common.exceptions :as ex]
    [app.common.data :as d]
    [app.common.spec :as us]
    [app.common.version :as v]
-   [app.common.uri :as u]
    [cljs.core :as c]
    [cljs.pprint]
    [cljs.spec.alpha :as s]
@@ -25,15 +22,13 @@
    :host "devenv"
    :http-server-port 6061
    :http-server-host "localhost"
-   :redis-uri "redis://redis/0"
-   :exporter-domain-whitelist #{"localhost:3449"}})
+   :redis-uri "redis://redis/0"})
 
 (s/def ::http-server-port ::us/integer)
 (s/def ::http-server-host ::us/string)
 (s/def ::public-uri ::us/uri)
 (s/def ::tenant ::us/string)
 (s/def ::host ::us/string)
-(s/def ::domain-white-list ::us/set-of-str)
 (s/def ::browser-pool-max ::us/integer)
 (s/def ::browser-pool-min ::us/integer)
 
@@ -44,8 +39,7 @@
                    ::http-server-port
                    ::http-server-host
                    ::browser-pool-max
-                   ::browser-pool-min
-                   ::domain-whitelist]))
+                   ::browser-pool-min]))
 
 (defn- read-env
   [prefix]

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.events
   (:require
@@ -84,6 +84,7 @@
 (derive :app.main.data.comments/update-comment-thread-status ::generic-action)
 (derive :app.main.data.dashboard/delete-team-member ::generic-action)
 (derive :app.main.data.dashboard/duplicate-project ::generic-action)
+(derive :app.main.data.dashboard/create-file ::generic-action)
 (derive :app.main.data.dashboard/file-created ::generic-action)
 (derive :app.main.data.dashboard/invite-team-members ::generic-action)
 (derive :app.main.data.dashboard/leave-team ::generic-action)
@@ -94,6 +95,7 @@
 (derive :app.main.data.dashboard/set-file-shared ::generic-action)
 (derive :app.main.data.dashboard/update-team-member-role ::generic-action)
 (derive :app.main.data.dashboard/update-team-photo ::generic-action)
+(derive :app.main.data.dashboard/clone-template ::generic-action)
 (derive :app.main.data.fonts/add-font ::generic-action)
 (derive :app.main.data.fonts/delete-font ::generic-action)
 (derive :app.main.data.fonts/delete-font-variant ::generic-action)
@@ -213,7 +215,7 @@
 (defn- persist-events
   [events]
   (if (seq events)
-    (let [uri    (u/join cf/public-uri "api/audit/events")
+    (let [uri    (u/join @cf/public-uri "api/audit/events")
           params {:uri uri
                   :method :post
                   :body (http/transit-data {:events events})}]

@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.sidebar.options.rows.stroke-row
   (:require
@@ -14,7 +14,7 @@
    [app.main.ui.workspace.sidebar.options.rows.color-row :refer [color-row]]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (defn- width->string [width]
   (if (= width :multiple)
@@ -47,7 +47,7 @@
         (second))))
 
 (mf/defc stroke-row
-  [{:keys [index stroke title show-caps on-color-change on-reorder on-color-detach on-remove on-stroke-width-change on-stroke-style-change on-stroke-alignment-change open-caps-select close-caps-select on-stroke-cap-start-change on-stroke-cap-end-change on-stroke-cap-switch disable-drag select-all on-blur]}]
+  [{:keys [index stroke title show-caps on-color-change on-reorder on-color-detach on-remove on-stroke-width-change on-stroke-style-change on-stroke-alignment-change open-caps-select close-caps-select on-stroke-cap-start-change on-stroke-cap-end-change on-stroke-cap-switch disable-drag select-all on-blur disable-stroke-style]}]
   (let [start-caps-state (mf/use-state {:open? false
                                         :top 0
                                         :left 0})
@@ -110,14 +110,15 @@
        [:option {:value ":inner"} (tr "workspace.options.stroke.inner")]
        [:option {:value ":outer"} (tr "workspace.options.stroke.outer")]]
 
-      [:select#style.input-select {:value (enum->string (:stroke-style stroke))
-                                   :on-change (on-stroke-style-change index)}
-       (when (= (:stroke-style stroke) :multiple)
-         [:option {:value ""} "--"])
-       [:option {:value ":solid"} (tr "workspace.options.stroke.solid")]
-       [:option {:value ":dotted"} (tr "workspace.options.stroke.dotted")]
-       [:option {:value ":dashed"} (tr "workspace.options.stroke.dashed")]
-       [:option {:value ":mixed"} (tr "workspace.options.stroke.mixed")]]]
+      (when-not disable-stroke-style
+        [:select#style.input-select {:value (enum->string (:stroke-style stroke))
+                                     :on-change (on-stroke-style-change index)}
+         (when (= (:stroke-style stroke) :multiple)
+           [:option {:value ""} "--"])
+         [:option {:value ":solid"} (tr "workspace.options.stroke.solid")]
+         [:option {:value ":dotted"} (tr "workspace.options.stroke.dotted")]
+         [:option {:value ":dashed"} (tr "workspace.options.stroke.dashed")]
+         [:option {:value ":mixed"} (tr "workspace.options.stroke.mixed")]])]
 
      ;; Stroke Caps
      (when show-caps

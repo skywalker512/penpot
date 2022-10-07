@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.services-media-test
   (:require
@@ -46,8 +46,11 @@
         (t/is (sto/storage-object? mobj1))
         (t/is (sto/storage-object? mobj2))
         (t/is (= 122785 (:size mobj1)))
-        (t/is (= 3303   (:size mobj2)))))
-    ))
+        ;; This is because in ubuntu 21.04 generates different
+        ;; thumbnail that in ubuntu 22.04. This hack should be removed
+        ;; when we all use the ubuntu 22.04 devenv image.
+        (t/is (or (= 3302 (:size mobj2))
+                  (= 3303 (:size mobj2))))))))
 
 (t/deftest media-object-upload
   (let [prof   (th/create-profile* 1)

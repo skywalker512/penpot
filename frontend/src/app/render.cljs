@@ -2,17 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.render
   "The main entry point for UI part needed by the exporter."
   (:require
+   [app.common.geom.shapes.bounds :as gsb]
    [app.common.logging :as l]
    [app.common.math :as mth]
    [app.common.spec :as us]
    [app.common.uri :as u]
-   [app.config :as cf]
    [app.main.data.fonts :as df]
+   [app.main.features :as features]
    [app.main.render :as render]
    [app.main.repo :as repo]
    [app.main.store :as st]
@@ -22,7 +23,7 @@
    [clojure.spec.alpha :as s]
    [cuerdas.core :as str]
    [garden.core :refer [css]]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; SETUP
@@ -35,10 +36,6 @@
 (declare ^:private render-single-object)
 (declare ^:private render-components)
 (declare ^:private render-objects)
-
-(l/info :hint "Welcome to penpot (Export)"
-        :version (:full @cf/version)
-        :public-uri (str cf/public-uri))
 
 (defn- parse-params
   [loc]
@@ -79,7 +76,7 @@
 
   It receives a function to execute for retrieve the stream that will
   be used for creating the subscription. The function should be
-  stable, so is the responsability of the user of this hook to
+  stable, so is the responsibility of the user of this hook to
   properly memoize it.
 
   TODO: this should be placed in some generic hooks namespace but his
@@ -98,23 +95,25 @@
     state))
 
 (mf/defc object-svg
-  [{:keys [page-id file-id object-id render-embed? render-texts?]}]
-  (let [fetch-state (mf/use-fn
-                     (mf/deps file-id page-id object-id)
-                     (fn []
-                       (->> (rx/zip
-                             (repo/query! :font-variants {:file-id file-id})
-                             (repo/query! :page {:file-id file-id
-                                                 :page-id page-id
-                                                 :object-id object-id}))
-                            (rx/tap (fn [[fonts]]
-                                      (when (seq fonts)
-                                        (st/emit! (df/fonts-fetched fonts)))))
-                            (rx/map (comp :objects second))
-                            (rx/map (fn [objects]
-                                      (let [objects (render/adapt-objects-for-shape objects object-id)]
-                                        {:objects objects
-                                         :object object-id}))))))
+  [{:keys [page-id file-id object-id render-embed?]}]
+  (let [components-v2 (features/use-feature :components-v2)
+        fetch-state   (mf/use-fn
+                        (mf/deps file-id page-id object-id)
+                        (fn []
+                          (->> (rx/zip
+                                 (repo/query! :font-variants {:file-id file-id})
+                                 (repo/query! :page {:file-id file-id
+                                                     :page-id page-id
+                                                     :object-id object-id
+                                                     :components-v2 components-v2}))
+                               (rx/tap (fn [[fonts]]
+                                         (when (seq fonts)
+                                           (st/emit! (df/fonts-fetched fonts)))))
+                               (rx/map (comp :objects second))
+                               (rx/map (fn [objects]
+                                         (let [objects (render/adapt-objects-for-shape objects object-id)]
+                                           {:objects objects
+                                            :object (get objects object-id)}))))))
 
         {:keys [objects object]} (use-resource fetch-state)]
 
@@ -122,31 +121,33 @@
     ;; exportation process.
     (mf/with-effect [object]
       (when object
-        (dom/set-page-style!
-          {:size (str/concat
-                  (mth/ceil (:width object)) "px "
-                  (mth/ceil (:height object)) "px")})))
+        (let [{:keys [width height]} (gsb/get-object-bounds [objects] object)]
+          (dom/set-page-style!
+           {:size (str/concat
+                   (mth/ceil width) "px "
+                   (mth/ceil height) "px")}))))
 
     (when objects
       [:& render/object-svg
        {:objects objects
         :object-id object-id
-        :render-embed? render-embed?
-        :render-texts? render-texts?}])))
+        :render-embed? render-embed?}])))
 
 (mf/defc objects-svg
-  [{:keys [page-id file-id object-ids render-embed? render-texts?]}]
-  (let [fetch-state (mf/use-fn
-                     (mf/deps file-id page-id)
-                     (fn []
-                       (->> (rx/zip
-                             (repo/query! :font-variants {:file-id file-id})
-                             (repo/query! :page {:file-id file-id
-                                                 :page-id page-id}))
-                            (rx/tap (fn [[fonts]]
-                                      (when (seq fonts)
-                                        (st/emit! (df/fonts-fetched fonts)))))
-                            (rx/map (comp :objects second)))))
+  [{:keys [page-id file-id object-ids render-embed?]}]
+  (let [components-v2 (features/use-feature :components-v2)
+        fetch-state   (mf/use-fn
+                       (mf/deps file-id page-id)
+                       (fn []
+                         (->> (rx/zip
+                               (repo/query! :font-variants {:file-id file-id})
+                               (repo/query! :page {:file-id file-id
+                                                   :page-id page-id
+                                                   :components-v2 components-v2}))
+                              (rx/tap (fn [[fonts]]
+                                        (when (seq fonts)
+                                          (st/emit! (df/fonts-fetched fonts)))))
+                              (rx/map (comp :objects second)))))
 
         objects (use-resource fetch-state)]
 
@@ -157,27 +158,24 @@
            {:objects objects
             :key (str object-id)
             :object-id object-id
-            :render-embed? render-embed?
-            :render-texts? render-texts?}])))))
+            :render-embed? render-embed?}])))))
 
 (s/def ::page-id ::us/uuid)
 (s/def ::file-id ::us/uuid)
 (s/def ::object-id
   (s/or :single ::us/uuid
         :multiple (s/coll-of ::us/uuid)))
-(s/def ::render-text ::us/boolean)
 (s/def ::embed ::us/boolean)
 
 (s/def ::render-objects
   (s/keys :req-un [::file-id ::page-id ::object-id]
-          :opt-un [::render-text ::render-embed]))
+          :opt-un [::render-embed]))
 
 (defn- render-objects
   [params]
   (let [{:keys [file-id
                 page-id
-                render-embed
-                render-texts]
+                render-embed]
          :as params}
         (us/conform ::render-objects params)
 
@@ -190,8 +188,7 @@
         {:file-id file-id
          :page-id page-id
          :object-id object-id
-         :render-embed? render-embed
-         :render-texts? render-texts}])
+         :render-embed? render-embed}])
 
       :multiple
       (mf/html
@@ -199,8 +196,7 @@
         {:file-id file-id
          :page-id page-id
          :object-ids (into #{} object-id)
-         :render-embed? render-embed
-         :render-texts? render-texts}]))))
+         :render-embed? render-embed}]))))
 
 ;; ---- COMPONENTS SPRITE
 
@@ -264,7 +260,7 @@
           :embed embed}
 
          (when-let [component-id (:component-id @state)]
-           [:use {:x 0 :y 0 :xlinkHref (str "#" component-id)}])]]
+           [:use {:x 0 :y 0 :href (str "#" component-id)}])]]
 
        ])))
 

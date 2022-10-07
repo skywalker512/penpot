@@ -1,114 +1,103 @@
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+;;
+;; Copyright (c) KALEIDOS INC
+
 (ns app.srepl.main
-  "A  main namespace for server repl."
+  "A collection of adhoc fixes scripts."
   #_:clj-kondo/ignore
   (:require
-   [app.common.data :as d]
-   [app.common.exceptions :as ex]
    [app.common.logging :as l]
-   [app.common.pages :as cp]
-   [app.common.pages.migrations :as pmg]
-   [app.common.spec.file :as spec.file]
-   [app.common.uuid :as uuid]
-   [app.config :as cfg]
+   [app.common.pprint :as p]
+   [app.common.spec :as us]
    [app.db :as db]
-   [app.db.sql :as sql]
-   [app.main :refer [system]]
-   [app.rpc.queries.profile :as prof]
-   [app.srepl.dev :as dev]
-   [app.util.blob :as blob]
+   [app.rpc.commands.auth :as cmd.auth]
+   [app.rpc.queries.profile :as profile]
+   [app.srepl.fixes :as f]
+   [app.srepl.helpers :as h]
    [app.util.time :as dt]
-   [clojure.spec.alpha :as s]
-   [clojure.walk :as walk]
-   [cuerdas.core :as str]
-   [expound.alpha :as expound]
-   [fipp.edn :refer [pprint]]))
+   [clojure.pprint :refer [pprint]]
+   [cuerdas.core :as str]))
 
-(defn update-file
-  ([system id f] (update-file system id f false))
-  ([system id f save?]
-   (db/with-atomic [conn (:app.db/pool system)]
-     (let [file (db/get-by-id conn :file id {:for-update true})
-           file (-> file
-                    (update :data app.util.blob/decode)
-                    (update :data pmg/migrate-data)
-                    (update :data f)
-                    (update :data blob/encode)
-                    (update :revn inc))]
-       (when save?
-         (db/update! conn :file
-                     {:data (:data file)}
-                     {:id (:id file)}))
-       (update file :data blob/decode)))))
+(defn print-available-tasks
+  [system]
+  (let [tasks (:app.worker/registry system)]
+    (p/pprint (keys tasks) :level 200)))
 
-(defn reset-file-data
-  [system id data]
+(defn run-task!
+  ([system name]
+   (run-task! system name {}))
+  ([system name params]
+   (let [tasks (:app.worker/registry system)]
+     (if-let [task-fn (get tasks name)]
+       (task-fn params)
+       (println (format "no task '%s' found" name))))))
+
+(defn send-test-email!
+  [system destination]
+  (us/verify!
+   :expr (some? system)
+   :hint "system should be provided")
+
+  (us/verify!
+   :expr (string? destination)
+   :hint "destination should be provided")
+
+  (let [handler (:app.emails/sendmail system)]
+    (handler {:body "test email"
+              :subject "test email"
+              :to [destination]})))
+
+(defn resend-email-verification-email!
+  [system email]
+  (us/verify!
+   :expr (some? system)
+   :hint "system should be provided")
+
+  (let [sprops  (:app.setup/props system)
+        pool    (:app.db/pool system)
+        profile (profile/retrieve-profile-data-by-email pool email)]
+
+    (cmd.auth/send-email-verification! pool sprops profile)
+    :email-sent))
+
+(defn update-profile!
+  "Update a limited set of profile attrs."
+  [system & {:keys [email id active? deleted? blocked?]}]
+
+  (us/verify!
+   :expr (some? system)
+   :hint "system should be provided")
+
+  (us/verify!
+   :expr (or (string? email) (uuid? id))
+   :hint "email or id should be provided")
+
+  (let [params (cond-> {}
+                 (true? active?) (assoc :is-active true)
+                 (false? active?) (assoc :is-active false)
+                 (true? deleted?) (assoc :deleted-at (dt/now))
+                 (true? blocked?) (assoc :is-blocked true)
+                 (false? blocked?) (assoc :is-blocked false))
+        opts   (cond-> {}
+                 (some? email) (assoc :email (str/lower email))
+                 (some? id)    (assoc :id id))]
+
+    (db/with-atomic [conn (:app.db/pool system)]
+      (some-> (db/update! conn :profile params opts)
+              (profile/decode-profile-row)))))
+
+(defn mark-profile-as-blocked!
+  "Mark the profile blocked and removes all the http sessiones
+  associated with the profile-id."
+  [system email]
   (db/with-atomic [conn (:app.db/pool system)]
-    (db/update! conn :file
-                {:data data}
-                {:id id})))
-
-(defn get-file
-  [system id]
-  (-> (:app.db/pool system)
-      (db/get-by-id :file id)
-      (update :data app.util.blob/decode)
-      (update :data pmg/migrate-data)))
-
-(defn duplicate-file
-  "This is a raw version of duplication of file just only for forensic analysis"
-  [system file-id email]
-  (db/with-atomic [conn (:app.db/pool system)]
-    (when-let [profile (some->> (prof/retrieve-profile-data-by-email conn (str/lower email))
-                                (prof/populate-additional-data conn))]
-      (when-let [file (db/exec-one! conn (sql/select :file {:id file-id}))]
-        (let [params (assoc file
-                            :id (uuid/next)
-                            :project-id (:default-project-id profile))]
-          (db/insert! conn :file params)
-          (:id file))))))
-
-;; (defn check-image-shapes
-;;   [{:keys [data] :as file} stats]
-;;   (println "=> analizing file:" (:name file) (:id file))
-;;   (swap! stats update :total-files (fnil inc 0))
-;;   (let [affected? (atom false)]
-;;     (walk/prewalk (fn [obj]
-;;                     (when (and (map? obj) (= :image (:type obj)))
-;;                       (when-let [fcolor (some-> obj :fill-color str/upper)]
-;;                         (when (or (= fcolor "#B1B2B5")
-;;                                   (= fcolor "#7B7D85"))
-;;                           (reset! affected? true)
-;;                           (swap! stats update :affected-shapes (fnil inc 0))
-;;                           (println "--> image shape:" ((juxt :id :name :fill-color :fill-opacity) obj)))))
-;;                     obj)
-;;                   data)
-;;     (when @affected?
-;;       (swap! stats update :affected-files (fnil inc 0)))))
-
-(defn analyze-files
-  [system {:keys [sleep chunk-size max-chunks on-file]
-           :or {sleep 1000 chunk-size 10 max-chunks ##Inf}}]
-  (let [stats (atom {})]
-    (letfn [(retrieve-chunk [conn cursor]
-              (let [sql (str "select id, name, modified_at, data from file "
-                             " where modified_at < ? and deleted_at is null "
-                             " order by modified_at desc limit ?")]
-                (->> (db/exec! conn [sql cursor chunk-size])
-                     (map #(update % :data blob/decode)))))
-
-            (process-chunk [chunk]
-              (loop [items chunk]
-                (when-let [item (first items)]
-                  (on-file item stats)
-                  (recur (rest items)))))]
-
-      (db/with-atomic [conn (:app.db/pool system)]
-        (loop [cursor (dt/now)
-               chunks 0]
-          (when (< chunks max-chunks)
-            (when-let [chunk (retrieve-chunk conn cursor)]
-              (let [cursor (-> chunk last :modified-at)]
-                (process-chunk chunk)
-                (Thread/sleep (inst-ms (dt/duration sleep)))
-                (recur cursor (inc chunks))))))
-        @stats))))
+    (when-let [profile (db/get-by-params conn :profile
+                                         {:email (str/lower email)}
+                                         {:columns [:id :email]
+                                          :check-not-found false})]
+      (when-not (:is-blocked profile)
+        (db/update! conn :profile {:is-blocked true} {:id (:id profile)})
+        (db/delete! conn :http-session {:profile-id (:id profile)})
+        :blocked))))

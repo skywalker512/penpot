@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.shapes.svg-raw
   (:require
@@ -11,7 +11,7 @@
    [app.main.ui.shapes.attrs :as usa]
    [app.util.object :as obj]
    [app.util.svg :as usvg]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;; Graphic tags
 (defonce graphic-element?
@@ -60,7 +60,7 @@
                   (obj/set! "preserveAspectRatio" "none"))]
 
     [:& (mf/provider svg-ids-ctx) {:value ids-mapping}
-     [:g.svg-raw {:transform (dm/str (gsh/transform-matrix shape))}
+     [:g.svg-raw {:transform (gsh/transform-str shape)}
       [:> "svg" attrs children]]]))
 
 (mf/defc svg-element
@@ -94,9 +94,10 @@
           {:keys [content]} shape
           {:keys [tag]} content
 
-          svg-root? (and (map? content) (= tag :svg))
-          svg-tag?  (map? content)
-          svg-leaf? (string? content)]
+          svg-root?  (and (map? content) (= tag :svg))
+          svg-tag?   (map? content)
+          svg-leaf?  (string? content)
+          valid-tag? (contains? usvg/svg-tags-list tag)]
 
       (cond
         svg-root?
@@ -104,12 +105,12 @@
          (for [item childs]
            [:& shape-wrapper {:shape item :key (dm/str (:id item))}])]
 
-        svg-tag?
+        (and svg-tag? valid-tag?)
         [:& svg-element {:shape shape}
          (for [item childs]
            [:& shape-wrapper {:shape item :key (dm/str (:id item))}])]
 
-        svg-leaf?
+        (and svg-leaf? valid-tag?)
         content
 
         :else nil))))

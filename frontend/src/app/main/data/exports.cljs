@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.exports
   (:require
@@ -145,7 +145,7 @@
     ptk/WatchEvent
     (watch [_ _ _]
       (when (= status "ended")
-        (->> (rp/query! :exporter {:cmd :get-resource :blob? true :id resource-id})
+        (->> (rp/command! :export {:cmd :get-resource :blob? true :id resource-id})
              (rx/delay 500)
              (rx/map #(dom/trigger-download filename %)))))))
 
@@ -165,9 +165,9 @@
                         :wait true}]
         (rx/concat
          (rx/of ::dwp/force-persist)
-         (->> (rp/query! :exporter params)
+         (->> (rp/command! :export params)
               (rx/mapcat (fn [{:keys [id filename]}]
-                           (->> (rp/query! :exporter {:cmd :get-resource :blob? true :id id})
+                           (->> (rp/command! :export {:cmd :get-resource :blob? true :id id})
                                 (rx/map (fn [data]
                                           (dom/trigger-download filename data)
                                           (clear-export-state uuid/zero))))))
@@ -213,7 +213,7 @@
 
          ;; Launch the exportation process and stores the resource id
          ;; locally.
-         (->> (rp/query! :exporter params)
+         (->> (rp/command! :export params)
               (rx/map (fn [{:keys [id] :as resource}]
                         (vreset! resource-id id)
                         (initialize-export-status exports cmd resource))))
@@ -229,9 +229,9 @@
                              (swap! st/ongoing-tasks disj :export))))
 
          ;; We hide need to hide the ui elements of the export after
-         ;; some interval. We also delay a litle bit more the stopper
+         ;; some interval. We also delay a little bit more the stopper
          ;; for ensure that after some security time, the stream is
-         ;; completelly closed.
+         ;; completely closed.
          (->> progress-stream
               (rx/filter #(= "ended" (:status %)))
               (rx/take 1)

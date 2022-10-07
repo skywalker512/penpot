@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.data.workspace.guides
   (:require
@@ -10,11 +10,10 @@
    [app.common.geom.shapes :as gsh]
    [app.common.pages.changes-builder :as pcb]
    [app.common.spec :as us]
-   [app.common.spec.page :as csp]
+   [app.common.types.page :as ctp]
    [app.main.data.workspace.changes :as dwc]
    [app.main.data.workspace.state-helpers :as wsh]
    [beicon.core :as rx]
-   [cljs.spec.alpha :as s]
    [potok.core :as ptk]))
 
 (defn make-update-guide [guide]
@@ -24,7 +23,7 @@
       (merge guide))))
 
 (defn update-guides [guide]
-  (us/verify ::csp/guide guide)
+  (us/verify ::ctp/guide guide)
   (ptk/reify ::update-guides
     ptk/WatchEvent
     (watch [it state _]
@@ -36,7 +35,7 @@
         (rx/of (dwc/commit-changes changes))))))
 
 (defn remove-guide [guide]
-  (us/verify ::csp/guide guide)
+  (us/verify ::ctp/guide guide)
   (ptk/reify ::remove-guide
     ptk/UpdateEvent
     (update [_ state]
@@ -63,11 +62,10 @@
             guides (-> (select-keys guides ids) (vals))]
         (rx/from (->> guides (mapv #(remove-guide %))))))))
 
-(defn move-frame-guides
-  "Move guides that are inside a frame when that frame is moved"
-  [ids]
-  (us/verify (s/coll-of uuid?) ids)
 
+(defmethod ptk/resolve ::move-frame-guides
+  [_ ids]
+  (us/assert! ::us/coll-of-uuid ids)
   (ptk/reify ::move-frame-guides
     ptk/WatchEvent
     (watch [_ state _]
@@ -88,11 +86,11 @@
                                       (gpt/point (:x frame') (:y frame')))
 
                     guide (update guide :position + (get moved (:axis guide)))]
-                (update-guides guide)))]
+                (update-guides guide)))
 
-        (->> (wsh/lookup-page-options state)
-             :guides
-             (vals)
+            guides (-> state wsh/lookup-page-options :guides vals)]
+
+        (->> guides
              (filter (comp frame-ids? :frame-id))
              (map build-move-event)
              (rx/from))))))

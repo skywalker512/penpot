@@ -2,15 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.sidebar.options.menus.measures
   (:require
    [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
-   [app.common.spec.radius :as ctr]
+   [app.common.types.shape.radius :as ctsr]
+   [app.main.constants :refer [size-presets]]
    [app.main.data.workspace :as udw]
    [app.main.data.workspace.changes :as dch]
+   [app.main.data.workspace.interactions :as dwi]
+   [app.main.data.workspace.undo :as dwu]
    [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.dropdown :refer [dropdown]]
@@ -18,22 +21,26 @@
    [app.main.ui.icons :as i]
    [app.util.dom :as dom]
    [app.util.i18n :as i18n :refer [tr]]
-   [clojure.set :refer [union]]
-   [rumext.alpha :as mf]))
+   [clojure.set :refer [rename-keys union]]
+   [rumext.v2 :as mf]))
 
 (def measure-attrs
   [:proportion-lock
    :width :height
    :x :y
+   :ox :oy
    :rotation
    :rx :ry
    :r1 :r2 :r3 :r4
-   :selrect])
+   :selrect
+   :points
+   :show-content
+   :hide-in-viewer])
 
 (def ^:private type->options
   {:bool    #{:size :position :rotation}
    :circle  #{:size :position :rotation}
-   :frame   #{:presets :size :position :radius}
+   :frame   #{:presets :size :position :rotation :radius :clip-content :show-in-viewer}
    :group   #{:size :position :rotation}
    :image   #{:size :position :rotation :radius}
    :path    #{:size :position :rotation}
@@ -41,12 +48,26 @@
    :svg-raw #{:size :position :rotation}
    :text    #{:size :position :rotation}})
 
-(declare +size-presets+)
+(defn select-measure-keys
+  "Consider some shapes can be drawn from bottom to top or from left to right"
+  [shape]
+  (let [shape (cond
+                (and (:flip-x shape) (:flip-y shape))
+                (rename-keys shape {:r1 :r3 :r2 :r4 :r3 :r1 :r4 :r2})
+
+                (:flip-x shape)
+                (rename-keys shape {:r1 :r2 :r2 :r1 :r3 :r4 :r4 :r3})
+
+                (:flip-y shape)
+                (rename-keys shape {:r1 :r4 :r2 :r3 :r3 :r2 :r4 :r1})
+
+                :else
+                shape)]
+    (select-keys shape measure-attrs)))
 
 ;; -- User/drawing coords
 (mf/defc measures-menu
   [{:keys [ids ids-with-children values type all-types shape] :as props}]
-         
   (let [options (if (= type :multiple)
                   (reduce #(union %1 %2) (map #(get type->options %) all-types))
                   (get type->options type))
@@ -58,21 +79,39 @@
                      [shape])
         frames (map #(deref (refs/object-by-id (:frame-id %))) old-shapes)
 
+        ;; To show interactively the measures while the user is manipulating
+        ;; the shape with the mouse, generate a copy of the shapes applying
+        ;; the transient transformations.
         shapes (as-> old-shapes $
                  (map gsh/transform-shape $)
                  (map gsh/translate-to-frame $ frames))
 
-        values (let [{:keys [x y]} (-> shapes first :points gsh/points->selrect)]
+        ;; For rotated or stretched shapes, the origin point we show in the menu
+        ;; is not the (:x :y) shape attribute, but the top left coordinate of the
+        ;; wrapping rectangle.
+        values (let [{:keys [x y]} (gsh/selection-rect [(first shapes)])]
                  (cond-> values
                    (not= (:x values) :multiple) (assoc :x x)
-                   (not= (:y values) :multiple) (assoc :y y)))
+                   (not= (:y values) :multiple) (assoc :y y)
+                   ;; In case of multiple selection, the origin point has been already
+                   ;; calculated and given in the fake :ox and :oy attributes. See
+                   ;; common/src/app/common/attrs.cljc
+                   (and (= (:x values) :multiple)
+                        (some? (:ox values))) (assoc :x (:ox values))
+                   (and (= (:y values) :multiple)
+                        (some? (:oy values))) (assoc :y (:oy values))))
 
+        ;; For :height and :width we take those in the :selrect attribute, because
+        ;; not all shapes have an own :width and :height (e. g. paths). Here the
+        ;; rotation is ignored (selrect always has the original size excluding
+        ;; transforms).
         values (let [{:keys [width height]} (-> shapes first :selrect)]
                  (cond-> values
                    (not= (:width values) :multiple) (assoc :width width)
                    (not= (:height values) :multiple) (assoc :height height)))
 
-        values (let [{:keys [rotation]} (-> shapes first)]
+        ;; The :rotation, however, does use the transforms.
+        values (let [{:keys [rotation] :or {rotation 0}} (-> shapes first)]
                  (cond-> values
                    (not= (:rotation values) :multiple) (assoc :rotation rotation)))
 
@@ -80,11 +119,13 @@
 
         show-presets-dropdown? (mf/use-state false)
 
-        radius-mode      (ctr/radius-mode values)
-        all-equal?       (ctr/all-equal? values)
+        radius-mode      (ctsr/radius-mode values)
+        all-equal?       (ctsr/all-equal? values)
         radius-multi?    (mf/use-state nil)
         radius-input-ref (mf/use-ref nil)
 
+        clip-content-ref (mf/use-ref nil)
+        show-in-viewer-ref (mf/use-ref nil)
 
         on-preset-selected
         (fn [width height]
@@ -93,12 +134,7 @@
 
         on-orientation-clicked
         (fn [orientation]
-          (let [width (:width values)
-                height (:height values)
-                new-width (if (= orientation :horiz) (max width height) (min width height))
-                new-height (if (= orientation :horiz) (min width height) (max width height))]
-            (st/emit! (udw/update-dimensions ids :width new-width)
-                      (udw/update-dimensions ids :height new-height))))
+          (st/emit! (udw/change-orientation ids orientation)))
 
         on-size-change
         (mf/use-callback
@@ -134,34 +170,36 @@
 
         change-radius
         (mf/use-callback
-          (mf/deps ids-with-children)
-          (fn [update-fn]
-            (dch/update-shapes ids-with-children
-                               (fn [shape]
-                                 (if (ctr/has-radius? shape)
-                                   (update-fn shape)
-                                   shape)))))
+         (mf/deps ids-with-children)
+         (fn [update-fn]
+           (dch/update-shapes ids-with-children
+                              (fn [shape]
+                                (if (ctsr/has-radius? shape)
+                                  (update-fn shape)
+                                  shape))
+                              {:reg-objects? true
+                               :attrs [:rx :ry :r1 :r2 :r3 :r4]})))
 
         on-switch-to-radius-1
         (mf/use-callback
          (mf/deps ids)
          (fn [_value]
            (if all-equal?
-             (st/emit! (change-radius ctr/switch-to-radius-1))
+             (st/emit! (change-radius ctsr/switch-to-radius-1))
              (reset! radius-multi? true))))
 
         on-switch-to-radius-4
         (mf/use-callback
          (mf/deps ids)
          (fn [_value]
-           (st/emit! (change-radius ctr/switch-to-radius-4))
+           (st/emit! (change-radius ctsr/switch-to-radius-4))
            (reset! radius-multi? false)))
 
         on-radius-1-change
         (mf/use-callback
          (mf/deps ids)
          (fn [value]
-           (st/emit! (change-radius #(ctr/set-radius-1 % value)))))
+           (st/emit! (change-radius #(ctsr/set-radius-1 % value)))))
 
         on-radius-multi-change
         (mf/use-callback
@@ -169,15 +207,15 @@
          (fn [event]
            (let [value (-> event dom/get-target dom/get-value d/parse-integer)]
              (when (some? value)
-               (st/emit! (change-radius ctr/switch-to-radius-1)
-                         (change-radius #(ctr/set-radius-1 % value)))
+               (st/emit! (change-radius ctsr/switch-to-radius-1)
+                         (change-radius #(ctsr/set-radius-1 % value)))
                (reset! radius-multi? false)))))
 
         on-radius-4-change
         (mf/use-callback
          (mf/deps ids)
          (fn [value attr]
-           (st/emit! (change-radius #(ctr/set-radius-4 % attr value)))))
+           (st/emit! (change-radius #(ctsr/set-radius-4 % attr value)))))
 
         on-width-change #(on-size-change % :width)
         on-height-change #(on-size-change % :height)
@@ -188,17 +226,40 @@
         on-radius-r3-change #(on-radius-4-change % :r3)
         on-radius-r4-change #(on-radius-4-change % :r4)
 
+        on-change-clip-content
+        (mf/use-callback
+         (mf/deps ids)
+         (fn [event]
+           (let [value (-> event dom/get-target dom/checked?)]
+             (st/emit! (dch/update-shapes ids (fn [shape] (assoc shape :show-content (not value))))))))
+
+        on-change-show-in-viewer
+        (mf/use-callback
+         (mf/deps ids)
+         (fn [event]
+           (let [value (-> event dom/get-target dom/checked?)]
+             (do
+               (st/emit! (dwu/start-undo-transaction)
+                         (dch/update-shapes ids (fn [shape] (assoc shape :hide-in-viewer (not value)))))
+
+               (when-not value
+                 ;; when a frame is no longer shown in view mode, cannot have
+                 ;; interactions that navigate to it.
+                 (apply st/emit! (map #(dwi/remove-all-interactions-nav-to %) ids)))
+
+               (st/emit! (dwu/commit-undo-transaction))))))
+
         select-all #(-> % (dom/get-target) (.select))]
-    
-        (mf/use-layout-effect
-         (mf/deps radius-mode @radius-multi?)
-         (fn []
-           (when (and (= radius-mode :radius-1)
-                      (= @radius-multi? false))
-             ;; when going back from radius-multi to normal radius-1,
-             ;; restore focus to the newly created numeric-input
-             (let [radius-input (mf/ref-val radius-input-ref)]
-               (dom/focus! radius-input)))))
+
+    (mf/use-layout-effect
+     (mf/deps radius-mode @radius-multi?)
+     (fn []
+       (when (and (= radius-mode :radius-1)
+                  (= @radius-multi? false))
+         ;; when going back from radius-multi to normal radius-1,
+         ;; restore focus to the newly created numeric-input
+         (let [radius-input (mf/ref-val radius-input-ref)]
+           (dom/focus! radius-input)))))
 
     [:*
      [:div.element-set
@@ -206,7 +267,7 @@
 
        ;; FRAME PRESETS
        (when (and (options :presets)
-                  (or (nil? all-types) (= (count all-types) 1))) ;; Dont' show presets if multi selected
+                  (or (nil? all-types) (= (count all-types) 1))) ;; Don't show presets if multi selected
          [:div.row-flex                                          ;; some frames and some non frames
           [:div.presets.custom-select.flex-grow {:on-click #(reset! show-presets-dropdown? true)}
            [:span (tr "workspace.options.size-presets")]
@@ -214,7 +275,7 @@
            [:& dropdown {:show @show-presets-dropdown?
                          :on-close #(reset! show-presets-dropdown? false)}
             [:ul.custom-select-dropdown
-             (for [size-preset +size-presets+]
+             (for [size-preset size-presets]
                (if-not (:width size-preset)
                  [:li.dropdown-label {:key (:name size-preset)}
                   [:span (:name size-preset)]]
@@ -279,7 +340,6 @@
             {:no-validate true
              :min 0
              :max 359
-             :default 0
              :data-wrap true
              :placeholder "--"
              :on-click select-all
@@ -356,172 +416,30 @@
                 :min 0
                 :on-click select-all
                 :on-change on-radius-r4-change
-                :value (:r4 values)}]]])])]]]))
+                :value (:r4 values)}]]])])
 
-     (def +size-presets+
-       [{:name "APPLE"}
-        {:name "iPhone 12/12 Pro"
-         :width 390
-         :height 844}
-        {:name "iPhone 12 Mini"
-         :width 360
-         :height 780}
-        {:name "iPhone 12 Pro Max"
-         :width 428
-         :height 926}
-        {:name "iPhone X/XS/11 Pro"
-         :width 375
-         :height 812}
-        {:name "iPhone XS Max/XR/11"
-         :width 414
-         :height 896}
-        {:name "iPhone 6/7/8 Plus"
-         :width 414
-         :height 736}
-        {:name "iPhone 6/7/8/SE2"
-         :width 375
-         :height 667}
-        {:name "iPhone 5/SE"
-         :width 320
-         :height 568}
-        {:name "iPad"
-         :width 768
-         :height 1024}
-        {:name "iPad Pro 10.5in"
-         :width 834
-         :height 1112}
-        {:name "iPad Pro 12.9in"
-         :width 1024
-         :height 1366}
-        {:name "Watch 44mm"
-         :width 368
-         :height 448}
-        {:name "Watch 42mm"
-         :width 312
-         :height 390}
-        {:name "Watch 40mm"
-         :width 324
-         :height 394}
-        {:name "Watch 38mm"
-         :width 272
-         :height 340}
+       (when (options :clip-content)
+         [:div.input-checkbox
+          [:input {:type "checkbox"
+                   :id "clip-content"
+                   :ref clip-content-ref
+                   :checked (not (:show-content values))
+                   :on-change on-change-clip-content}]
 
-        {:name "ANDROID"}
-        {:name "Mobile"
-         :width 360
-         :height 640}
-        {:name "Tablet"
-         :width 768
-         :height 1024}
-        {:name "Google Pixel 4a/5"
-         :width 393
-         :height 851}
-        {:name "Samsung Galaxy S20+"
-         :width 384
-         :height 854}
-        {:name "Samsung Galaxy A71/A51"
-         :width 412
-         :height 914}
+          [:label {:for "clip-content"}
+           (tr "workspace.options.clip-content")]])
 
-        {:name "MICROSOFT"}
-        {:name "Surface Pro 3"
-         :width 1440
-         :height 960}
-        {:name "Surface Pro 4/5/6/7"
-         :width 1368
-         :height 912}
+       (when (options :show-in-viewer)
+         [:div.input-checkbox
+          [:input {:type "checkbox"
+                   :id "show-in-viewer"
+                   :ref show-in-viewer-ref
+                   :checked (not (:hide-in-viewer values))
+                   :on-change on-change-show-in-viewer}]
 
-        {:name "ReMarkable"}
-        {:name "Remarkable 2"
-         :width 840
-         :height 1120}
+          [:label {:for "show-in-viewer"}
+           (tr "workspace.options.show-in-viewer")]])
 
-        {:name "WEB"}
-        {:name "Web 1280"
-         :width 1280
-         :height 800}
-        {:name "Web 1366"
-         :width 1366
-         :height 768}
-        {:name "Web 1024"
-         :width 1024
-         :height 768}
-        {:name "Web 1920"
-         :width 1920
-         :height 1080}
+       ]]]))
 
-        {:name "PRINT (96dpi)"}
-        {:name "A0"
-         :width 3179
-         :height 4494}
-        {:name "A1"
-         :width 2245
-         :height 3179}
-        {:name "A2"
-         :width 1587
-         :height 2245}
-        {:name "A3"
-         :width 1123
-         :height 1587}
-        {:name "A4"
-         :width 794
-         :height 1123}
-        {:name "A5"
-         :width 559
-         :height 794}
-        {:name "A6"
-         :width 397
-         :height 559}
-        {:name "Letter"
-         :width 816
-         :height 1054}
-        {:name "DIN Lang"
-         :width 835
-         :height 413}
 
-        {:name "SOCIAL MEDIA"}
-        {:name "Instagram profile"
-         :width 320
-         :height 320}
-        {:name "Instagram post"
-         :width 1080
-         :height 1080}
-        {:name "Instagram story"
-         :width 1080
-         :height 1920}
-        {:name "Facebook profile"
-         :width 720
-         :height 720}
-        {:name "Facebook cover"
-         :width 820
-         :height 312}
-        {:name "Facebook post"
-         :width 1200
-         :height 630}
-        {:name "LinkedIn profile"
-         :width 400
-         :height 400}
-        {:name "LinkedIn cover"
-         :width 1584
-         :height 396}
-        {:name "LinkedIn post"
-         :width 1200
-         :height 627}
-        {:name "Twitter profile"
-         :width 400
-         :height 400}
-        {:name "Twitter header"
-         :width 1500
-         :height 500}
-        {:name "Twitter post"
-         :width 1024
-         :height 512}
-        {:name "YouTube profile"
-         :width 800
-         :height 800}
-        {:name "YouTube banner"
-         :width 2560
-         :height 1440}
-        {:name "YouTube thumb"
-         :width 1280
-         :height 720}])

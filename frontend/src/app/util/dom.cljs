@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.util.dom
   (:require
@@ -10,8 +10,10 @@
    [app.common.data.macros :as dm]
    [app.common.geom.point :as gpt]
    [app.common.logging :as log]
+   [app.common.media :as cm]
    [app.util.globals :as globals]
    [app.util.object :as obj]
+   [app.util.webapi :as wapi]
    [cuerdas.core :as str]
    [goog.dom :as dom]
    [promesa.core :as p]))
@@ -35,6 +37,14 @@
   (when (some? e)
     (.-target e)))
 
+(defn event->native-event
+  [^js e]
+  (.-nativeEvent e))
+
+(defn event->browser-event
+  [^js e]
+  (.getBrowserEvent e))
+
 ;; --- New methods
 
 (declare get-elements-by-tag)
@@ -42,6 +52,10 @@
 (defn set-html-title
   [^string title]
   (set! (.-title globals/document) title))
+
+(defn set-html-lang!
+  [^string lang]
+  (.setAttribute (.querySelector js/document "html") "lang" lang))
 
 (defn set-html-theme-color
   [^string color scheme]
@@ -89,6 +103,11 @@
   (when event
     (.stopPropagation event)))
 
+(defn stop-immediate-propagation
+  [^js event]
+  (when event
+    (.stopImmediatePropagation event)))
+
 (defn prevent-default
   [^js event]
   (when event
@@ -100,9 +119,21 @@
   (when (some? event)
     (.-target event)))
 
+(defn select-target
+  "Extract the target from event instance and select it"
+  [^js event]
+  (when (some? event)
+    (-> event (.-target) (.select))))
+
+(defn select-node
+  "Select element by node"
+  [^js node]
+  (when (some? node)
+    (.-select node)))
+
 (defn get-current-target
   "Extract the current target from event instance (different from target
-   when event triggered in a child of the subscribing element)."
+  when event triggered in a child of the subscribing element)."
   [^js event]
   (when (some? event)
     (.-currentTarget event)))
@@ -111,6 +142,14 @@
   [^js node]
   (when (some? node)
     (.-parentElement ^js node)))
+
+(defn get-parent-with-selector
+  [^js node selector]
+
+  (loop [current node]
+    (if (or (nil? current) (.matches current selector) )
+      current
+      (recur (.-parentElement current)))))
 
 (defn get-value
   "Extract the value from dom node."
@@ -227,6 +266,11 @@
   (when (some? el)
     (.appendChild ^js el child)))
 
+(defn remove-child!
+  [^js el child]
+  (when (some? el)
+    (.removeChild ^js el child)))
+
 (defn get-first-child
   [^js el]
   (when (some? el)
@@ -295,10 +339,10 @@
 (defn bounding-rect->rect
   [rect]
   (when (some? rect)
-    {:x      (or (.-left rect)   (:left rect))
-     :y      (or (.-top rect)    (:top rect))
-     :width  (or (.-width rect)  (:width rect))
-     :height (or (.-height rect) (:height rect))}))
+    {:x      (or (.-left rect)   (:left rect)   0)
+     :y      (or (.-top rect)    (:top rect)    0)
+     :width  (or (.-width rect)  (:width rect)  1)
+     :height (or (.-height rect) (:height rect) 1)}))
 
 (defn get-window-size
   []
@@ -329,27 +373,10 @@
       (log/error :msg "Seems like the current browser does not support fullscreen api.")
       false)))
 
-(defn ^boolean blob?
+(defn blob?
   [^js v]
   (when (some? v)
     (instance? js/Blob v)))
-
-(defn create-blob
-  "Create a blob from content."
-  ([content]
-   (create-blob content "application/octet-stream"))
-  ([content mimetype]
-   (js/Blob. #js [content] #js {:type mimetype})))
-
-(defn revoke-uri
-  [url]
-  (js/URL.revokeObjectURL url))
-
-(defn create-uri
-  "Create a url from blob."
-  [b]
-  {:pre [(blob? b)]}
-  (js/URL.createObjectURL b))
 
 (defn make-node
   ([namespace name]
@@ -360,8 +387,9 @@
 
 (defn node->xml
   [node]
-  (->  (js/XMLSerializer.)
-       (.serializeToString node)))
+  (when (some? node)
+    (->  (js/XMLSerializer.)
+         (.serializeToString node))))
 
 (defn svg->data-uri
   [svg]
@@ -387,6 +415,11 @@
     (.setProperty (.-style ^js node) property value))
   node)
 
+(defn unset-css-property! [^js node property]
+  (when (some? node)
+    (.removeProperty (.-style ^js node) property))
+  node)
+
 (defn capture-pointer [^js event]
   (when (some? event)
     (-> event get-target (.setPointerCapture (.-pointerId event)))))
@@ -394,6 +427,9 @@
 (defn release-pointer [^js event]
   (when (and (some? event) (.-pointerId event))
     (-> event get-target (.releasePointerCapture (.-pointerId event)))))
+
+(defn get-body []
+  (.-body globals/document))
 
 (defn get-root []
   (query globals/document "#app"))
@@ -442,21 +478,6 @@
   (when (some? node)
     (.getAttribute node (str "data-" attr))))
 
-(defn mtype->extension [mtype]
-  ;; https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
-  (case mtype
-    "image/apng"         ".apng"
-    "image/avif"         ".avif"
-    "image/gif"          ".gif"
-    "image/jpeg"         ".jpg"
-    "image/png"          ".png"
-    "image/svg+xml"      ".svg"
-    "image/webp"         ".webp"
-    "application/zip"    ".zip"
-    "application/penpot" ".penpot"
-    "application/pdf"    ".pdf"
-    nil))
-
 (defn set-attribute! [^js node ^string attr value]
   (when (some? node)
     (.setAttribute node attr value)))
@@ -470,10 +491,20 @@
   (when (some? element)
     (.-scrollTop element)))
 
+(defn get-h-scroll-pos
+  [^js element]
+  (when (some? element)
+    (.-scrollLeft element)))
+
 (defn set-scroll-pos!
   [^js element scroll]
   (when (some? element)
     (obj/set! element "scrollTop" scroll)))
+
+(defn set-h-scroll-pos!
+  [^js element scroll]
+  (when (some? element)
+    (obj/set! element "scrollLeft" scroll)))
 
 (defn scroll-into-view!
   ([^js element]
@@ -507,7 +538,7 @@
 (defn trigger-download-uri
   [filename mtype uri]
   (let [link      (create-element "a")
-        extension (mtype->extension mtype)
+        extension (cm/mtype->extension mtype)
         filename  (if (and extension (not (str/ends-with? filename extension)))
                     (str/concat filename extension)
                     filename)]
@@ -520,14 +551,14 @@
 
 (defn trigger-download
   [filename blob]
-  (trigger-download-uri filename (.-type ^js blob) (create-uri blob)))
+  (trigger-download-uri filename (.-type ^js blob) (wapi/create-uri blob)))
 
 (defn save-as
   [uri filename mtype description]
 
   ;; Only chrome supports the save dialog
   (if (obj/contains? globals/window "showSaveFilePicker")
-    (let [extension (mtype->extension mtype)
+    (let [extension (cm/mtype->extension mtype)
           opts {:suggestedName (str filename "." extension)
                 :types [{:description description
                          :accept { mtype [(str "." extension)]}}]}]
@@ -587,3 +618,20 @@
             (seq (.-children node)))]
     (->> root-node
          (tree-seq branch? get-children))))
+
+(defn check-font? [font]
+  (let [fonts (.-fonts globals/document)]
+    (.check fonts font)))
+
+(defn load-font [font]
+  (let [fonts (.-fonts globals/document)]
+    (.load fonts font)))
+
+(defn text-measure [font]
+  (let [element (.createElement globals/document "canvas")
+        context (.getContext element "2d")
+        _ (set! (.-font context) font)
+        measure ^js (.measureText context "Ag")]
+
+    {:ascent (.-fontBoundingBoxAscent measure)
+     :descent (.-fontBoundingBoxDescent measure)}))

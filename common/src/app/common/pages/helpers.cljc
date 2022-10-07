@@ -7,20 +7,25 @@
 (ns app.common.pages.helpers
   (:require
    [app.common.data :as d]
-   [app.common.geom.shapes :as gsh]
+   [app.common.data.macros :as dm]
    [app.common.spec :as us]
-   [app.common.spec.page :as spec.page]
    [app.common.uuid :as uuid]
    [cuerdas.core :as str]))
+
+(declare reduce-objects)
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; GENERIC SHAPE SELECTORS AND PREDICATES
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(defn root-frame?
+(defn root?
   [{:keys [id type]}]
+  (and (= type :frame) (= id uuid/zero)))
+
+(defn root-frame?
+  [{:keys [frame-id type]}]
   (and (= type :frame)
-       (= id uuid/zero)))
+       (= frame-id uuid/zero)))
 
 (defn frame-shape?
   [{:keys [type]}]
@@ -30,6 +35,10 @@
   [{:keys [type]}]
   (= type :group))
 
+(defn bool-shape?
+  [{:keys [type]}]
+  (= type :bool))
+
 (defn text-shape?
   [{:keys [type]}]
   (= type :text))
@@ -38,19 +47,15 @@
   [{:keys [type]}]
   (= type :image))
 
+(defn svg-raw-shape?
+  [{:keys [type]}]
+  (= type :svg-raw))
+
 (defn unframed-shape?
   "Checks if it's a non-frame shape in the top level."
   [shape]
   (and (not (frame-shape? shape))
        (= (:frame-id shape) uuid/zero)))
-
-(defn get-shape
-  [container shape-id]
-  (us/assert ::spec.page/container container)
-  (us/assert ::us/uuid shape-id)
-  (-> container
-      (get :objects)
-      (get shape-id)))
 
 (defn get-children-ids
   [objects id]
@@ -78,23 +83,14 @@
   [objects id]
   (-> objects (get id) :parent-id))
 
-(defn get-parents-seq
-  [objects shape-id]
-
-  (cond
-    (nil? shape-id)
-    nil
-
-    :else
-    (lazy-seq (cons shape-id (get-parents-seq objects (get-in objects [shape-id :parent-id]))))))
-
 (defn get-parent-ids
   "Returns a vector of parents of the specified shape."
   [objects shape-id]
   (loop [result [] id shape-id]
-    (if-let [parent-id (->> id (get objects) :parent-id)]
-      (recur (conj result parent-id) parent-id)
-      result)))
+    (let [parent-id (dm/get-in objects [id :parent-id])]
+      (if (and (some? parent-id) (not= parent-id id))
+        (recur (conj result parent-id) parent-id)
+        result))))
 
 (defn get-frame
   "Get the frame that contains the shape. If the shape is already a
@@ -139,39 +135,6 @@
           (:shapes)
           (keep lookup)))))
 
-(defn get-frames-ids
-  "Retrieves all frame objects as vector. It is not implemented in
-  function of `get-immediate-children` for performance reasons. This
-  function is executed in the render hot path."
-  [objects]
-  (let [lookup (d/getf objects)
-        xform  (comp (keep lookup)
-                     (filter frame-shape?)
-                     (map :id))]
-    (->> (:shapes (lookup uuid/zero))
-         (into [] xform))))
-
-(defn get-frames
-  "Retrieves all frame objects as vector. It is not implemented in
-  function of `get-immediate-children` for performance reasons. This
-  function is executed in the render hot path."
-  [objects]
-  (let [lookup (d/getf objects)
-        xform  (comp (keep lookup)
-                     (filter frame-shape?))]
-    (->> (:shapes (lookup uuid/zero))
-         (into [] xform))))
-
-(defn frame-id-by-position
-  [objects position]
-  (let [frames (get-frames objects)]
-    (or
-     (->> frames
-          (reverse)
-          (d/seek #(and position (gsh/has-point? % position)))
-          :id)
-     uuid/zero)))
-
 (declare indexed-shapes)
 
 (defn get-base-shape
@@ -192,23 +155,18 @@
   "Check if `parent-candidate` is parent of `shape-id`"
   [objects shape-id parent-candidate]
 
-  (loop [current (get objects parent-candidate)
-         done #{}
-         pending (:shapes current)]
-
+  (loop [current-id shape-id]
     (cond
-      (contains? done (:id current))
-      (recur (get objects (first pending))
-             done
-             (rest pending))
+      (= current-id parent-candidate)
+      true
 
-      (empty? pending) false
-      (and current (contains? (set (:shapes current)) shape-id)) true
+      (or (nil? current-id)
+          (= current-id uuid/zero)
+          (= current-id (get-in objects [current-id :parent-id])))
+      false
 
       :else
-      (recur (get objects (first pending))
-             (conj done (:id current))
-             (concat (rest pending) (:shapes current))))))
+      (recur (get-in objects [current-id :parent-id])))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; COMPONENTS HELPERS
@@ -229,16 +187,6 @@
    (some #(-> % :data :components (get component-id)) (vals libraries)))
   ([libraries library-id component-id]
    (get-in libraries [library-id :data :components component-id])))
-
-(defn is-main-of?
-  [shape-main shape-inst]
-  (and (:shape-ref shape-inst)
-       (or (= (:shape-ref shape-inst) (:id shape-main))
-           (= (:shape-ref shape-inst) (:shape-ref shape-main)))))
-
-(defn get-component-root
-  [component]
-  (get-in component [:objects (:id component)]))
 
 (defn get-component-shape
   "Get the parent shape linked to a component for this shape, if any"
@@ -335,57 +283,6 @@
             (conj id)))]
 
     (reduce add-element (d/ordered-set) ids)))
-
-(defn clone-object
-  "Gets a copy of the object and all its children, with new ids
-  and with the parent-children links correctly set. Admits functions
-  to make more transformations to the cloned objects and the
-  original ones.
-
-  Returns the cloned object, the list of all new objects (including
-  the cloned one), and possibly a list of original objects modified."
-
-  ([object parent-id objects update-new-object]
-   (clone-object object parent-id objects update-new-object identity))
-
-  ([object parent-id objects update-new-object update-original-object]
-   (let [new-id (uuid/next)]
-     (loop [child-ids (seq (:shapes object))
-            new-direct-children []
-            new-children []
-            updated-children []]
-
-       (if (empty? child-ids)
-         (let [new-object (cond-> object
-                            true
-                            (assoc :id new-id
-                                   :parent-id parent-id)
-
-                            (some? (:shapes object))
-                            (assoc :shapes (mapv :id new-direct-children)))
-
-               new-object  (update-new-object new-object object)
-               new-objects (into [new-object] new-children)
-
-               updated-object  (update-original-object object new-object)
-               updated-objects (if (identical? object updated-object)
-                                 updated-children
-                                 (into [updated-object] updated-children))]
-
-           [new-object new-objects updated-objects])
-
-         (let [child-id (first child-ids)
-               child (get objects child-id)
-               _ (us/assert some? child)
-
-               [new-child new-child-objects updated-child-objects]
-               (clone-object child new-id objects update-new-object update-original-object)]
-
-           (recur
-            (next child-ids)
-            (into new-direct-children [new-child])
-            (into new-children new-child-objects)
-            (into updated-children updated-child-objects))))))))
 
 (defn indexed-shapes
   "Retrieves a list with the indexes for each element in the layer tree.
@@ -502,3 +399,69 @@
           (reduce process-shape (transient {}))
           (persistent!))
      persistent!)))
+
+(defn selected-subtree
+  "Given a set of shapes, returns an objects subtree with the parents
+  of the selected items up to the root. Useful to calculate a partial z-index"
+  [objects selected]
+
+  (let [selected+parents
+        (into selected
+              (mapcat #(get-parent-ids objects %))
+              selected)
+
+        remove-children
+        (fn [shape]
+          (update shape :shapes #(filterv selected+parents %)))]
+
+    (-> (select-keys objects selected+parents)
+        (d/update-vals remove-children))))
+
+(defn is-child?
+  [objects parent-id candidate-child-id]
+  (let [parents (get-parent-ids objects candidate-child-id)]
+    (some? (d/seek #(= % parent-id) parents))))
+
+(defn reduce-objects
+  ([objects reducer-fn init-val]
+   (reduce-objects objects nil reducer-fn init-val))
+
+  ([objects check-children? reducer-fn init-val]
+   (reduce-objects objects check-children? uuid/zero reducer-fn init-val))
+
+  ([objects check-children? root-id reducer-fn init-val]
+   (let [root-children (get-in objects [root-id :shapes])]
+     (if (empty? root-children)
+       init-val
+
+       (loop [current-val init-val
+              current-id  (first root-children)
+              pending-ids (rest root-children)]
+
+
+         (let [current-shape (get objects current-id)
+               next-val (reducer-fn current-val current-shape)
+               next-pending-ids
+               (if (or (nil? check-children?) (check-children? current-shape))
+                 (concat (or (:shapes current-shape) []) pending-ids)
+                 pending-ids)]
+
+           (if (empty? next-pending-ids)
+             next-val
+             (recur next-val (first next-pending-ids) (rest next-pending-ids)))))))))
+
+(defn selected-with-children
+  [objects selected]
+
+  (into selected
+        (mapcat #(get-children-ids objects %))
+        selected))
+
+(defn get-shape-id-root-frame
+  [objects shape-id]
+  (->> (get-parent-ids objects shape-id)
+       (cons shape-id)
+       (map (d/getf objects))
+       (d/seek root-frame?)
+       :id))
+

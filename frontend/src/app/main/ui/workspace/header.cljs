@@ -2,16 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.header
   (:require
-   [app.common.data :as d]
+   [app.common.pages.helpers :as cph]
+   [app.common.uuid :as uuid]
    [app.config :as cf]
    [app.main.data.events :as ev]
    [app.main.data.exports :as de]
    [app.main.data.modal :as modal]
    [app.main.data.workspace :as dw]
+   [app.main.data.workspace.libraries :as dwl]
    [app.main.data.workspace.shortcuts :as sc]
    [app.main.refs :as refs]
    [app.main.repo :as rp]
@@ -29,8 +31,7 @@
    [beicon.core :as rx]
    [okulary.core :as l]
    [potok.core :as ptk]
-   [rumext.alpha :as mf]))
-
+   [rumext.v2 :as mf]))
 
 (def workspace-persistence-ref
   (l/derived :workspace-persistence st/state))
@@ -108,39 +109,40 @@
         show-sub-menu? (mf/use-state false)
         editing?       (mf/use-state false)
         edit-input-ref (mf/use-ref nil)
-        frames         (mf/deref refs/workspace-frames)
+        objects        (mf/deref refs/workspace-page-objects)
+        frames         (->> (cph/get-immediate-children objects uuid/zero)
+                            (filterv cph/frame-shape?))
 
         add-shared-fn
-        (st/emitf (dw/set-file-shared (:id file) true))
+        #(st/emit! (dwl/set-file-shared (:id file) true))
 
         del-shared-fn
-        (st/emitf (dw/set-file-shared (:id file) false))
+        #(st/emit! (dwl/set-file-shared (:id file) false))
 
         on-add-shared
         (mf/use-fn
          (mf/deps file)
-         (st/emitf (modal/show
-                    {:type :confirm
-                     :message ""
-                     :title (tr "modals.add-shared-confirm.message" (:name file))
-                     :hint (tr "modals.add-shared-confirm.hint")
-                     :cancel-label :omit
-                     :accept-label (tr "modals.add-shared-confirm.accept")
-                     :accept-style :primary
-                     :on-accept add-shared-fn})))
+         #(st/emit! (modal/show
+                     {:type :confirm
+                      :message ""
+                      :title (tr "modals.add-shared-confirm.message" (:name file))
+                      :hint (tr "modals.add-shared-confirm.hint")
+                      :cancel-label :omit
+                      :accept-label (tr "modals.add-shared-confirm.accept")
+                      :accept-style :primary
+                      :on-accept add-shared-fn})))
 
         on-remove-shared
         (mf/use-fn
          (mf/deps file)
-         (st/emitf (modal/show
-                    {:type :confirm
-                     :message ""
-                     :title (tr "modals.remove-shared-confirm.message" (:name file))
-                     :hint (tr "modals.remove-shared-confirm.hint")
-                     :cancel-label :omit
-                     :accept-label (tr "modals.remove-shared-confirm.accept")
-                     :on-accept del-shared-fn})))
-
+         #(st/emit! (modal/show
+                     {:type :confirm
+                      :message ""
+                      :title (tr "modals.remove-shared-confirm.message" (:name file))
+                      :hint (tr "modals.remove-shared-confirm.hint")
+                      :cancel-label :omit
+                      :accept-label (tr "modals.remove-shared-confirm.accept")
+                      :on-accept del-shared-fn})))
 
         handle-blur (fn [_]
                       (let [value (-> edit-input-ref mf/ref-val dom/get-value)]
@@ -160,27 +162,38 @@
            (st/emit! (de/show-workspace-export-dialog))))
 
         on-export-file
+        (fn [event-name binary?]
+          (st/emit! (ptk/event ::ev/event {::ev/name event-name
+                                           ::ev/origin "workspace"
+                                           :num-files 1}))
+
+          (->> (rx/of file)
+               (rx/flat-map
+                (fn [file]
+                  (->> (rp/command :has-file-libraries {:file-id (:id file)})
+                       (rx/map #(assoc file :has-libraries? %)))))
+               (rx/reduce conj [])
+               (rx/subs
+                (fn [files]
+                  (st/emit!
+                   (modal/show
+                    {:type :export
+                     :team-id team-id
+                     :has-libraries? (->> files (some :has-libraries?))
+                     :files files
+                     :binary? binary?}))))))
+
+        on-export-binary-file
         (mf/use-callback
          (mf/deps file team-id)
          (fn [_]
-           (st/emit! (ptk/event ::ev/event {::ev/name "export-files"
-                                            ::ev/origin "workspace"
-                                            :num-files 1}))
+           (on-export-file "export-binary-files" true)))
 
-           (->> (rx/of file)
-                (rx/flat-map
-                 (fn [file]
-                   (->> (rp/query :file-libraries {:file-id (:id file)})
-                        (rx/map #(assoc file :has-libraries? (d/not-empty? %))))))
-                (rx/reduce conj [])
-                (rx/subs
-                 (fn [files]
-                   (st/emit!
-                    (modal/show
-                     {:type :export
-                      :team-id team-id
-                      :has-libraries? (->> files (some :has-libraries?))
-                      :files files})))))))
+        on-export-standard-file
+        (mf/use-callback
+         (mf/deps file team-id)
+         (fn [_]
+           (on-export-file "export-standard-files" false)))
 
         on-export-frames
         (mf/use-callback
@@ -206,7 +219,16 @@
         (mf/use-callback
          (fn [flag]
            (-> (dw/toggle-layout-flag flag)
-               (vary-meta assoc ::ev/origin "workspace-menu"))))]
+               (vary-meta assoc ::ev/origin "workspace-menu"))))
+
+        show-release-notes
+        (mf/use-callback
+         (fn [event]
+           (let [version (:main @cf/version)]
+             (st/emit! (ptk/event ::ev/event {::ev/name "show-release-notes" :version version}))
+             (if (and (kbd/alt? event) (kbd/mod? event))
+               (st/emit! (modal/show {:type :onboarding}))
+               (st/emit! (modal/show {:type :release-notes :version version}))))))]
 
     (mf/use-effect
      (mf/deps @editing?)
@@ -250,10 +272,9 @@
        [:li {:on-click (on-item-click :preferences)
              :on-pointer-enter (on-item-hover :preferences)}
         [:span (tr "workspace.header.menu.option.preferences")] [:span i/arrow-slide]]
-       (when (contains? @cf/flags :user-feedback)
-         [:*
-          [:li.feedback {:on-click (st/emitf (rt/nav-new-window* {:rname :settings-feedback}))}
-           [:span (tr "labels.give-feedback")]]])]]
+       [:li.info {:on-click (on-item-click :help-info)
+                  :on-pointer-enter (on-item-hover :help-info)}
+        [:span (tr "workspace.header.menu.option.help-info")] [:span i/arrow-slide]]]]
 
      [:& dropdown {:show (= @show-sub-menu? :file)
                    :on-close #(reset! show-sub-menu? false)}
@@ -266,10 +287,12 @@
        [:li.export-file {:on-click on-export-shapes}
         [:span (tr "dashboard.export-shapes")]
         [:span.shortcut (sc/get-tooltip :export-shapes)]]
-       [:li.export-file {:on-click on-export-file}
-        [:span (tr "dashboard.export-single")]]
+       [:li.separator.export-file {:on-click on-export-binary-file}
+        [:span (tr "dashboard.download-binary-file")]]
+       [:li.export-file {:on-click on-export-standard-file}
+        [:span (tr "dashboard.download-standard-file")]]
        (when (seq frames)
-         [:li.export-file {:on-click on-export-frames}
+         [:li.separator.export-file {:on-click on-export-frames}
           [:span (tr "dashboard.export-frames")]])]]
 
      [:& dropdown {:show (= @show-sub-menu? :edit)
@@ -302,14 +325,6 @@
            (tr "workspace.header.menu.show-grid"))]
         [:span.shortcut (sc/get-tooltip :toggle-grid)]]
 
-       [:li {:on-click #(st/emit! (toggle-flag :sitemap)
-                                  (toggle-flag :layers))}
-        [:span
-         (if (or (contains? layout :sitemap) (contains? layout :layers))
-           (tr "workspace.header.menu.hide-layers")
-           (tr "workspace.header.menu.show-layers"))]
-        [:span.shortcut (sc/get-tooltip :toggle-layers)]]
-
        [:li {:on-click (fn []
                          (r/set-resize-type! :bottom)
                          (st/emit! (dw/remove-layout-flag :textpalette)
@@ -329,13 +344,6 @@
            (tr "workspace.header.menu.hide-textpalette")
            (tr "workspace.header.menu.show-textpalette"))]
         [:span.shortcut (sc/get-tooltip :toggle-textpalette)]]
-
-       [:li {:on-click #(st/emit! (toggle-flag :assets))}
-        [:span
-         (if (contains? layout :assets)
-           (tr "workspace.header.menu.hide-assets")
-           (tr "workspace.header.menu.show-assets"))]
-        [:span.shortcut (sc/get-tooltip :toggle-assets)]]
 
        [:li {:on-click #(st/emit! (toggle-flag :display-artboard-names))}
         [:span
@@ -388,7 +396,35 @@
         [:span.shortcut (sc/get-tooltip :snap-pixel-grid)]]
 
        [:li {:on-click #(st/emit! (modal/show {:type :nudge-option}))}
-        [:span (tr "modals.nudge-title")]]]]]))
+        [:span (tr "modals.nudge-title")]]]]
+
+     [:& dropdown {:show (= @show-sub-menu? :help-info)
+                   :on-close #(reset! show-sub-menu? false)}
+      [:ul.sub-menu.help-info
+       [:li {:on-click #(dom/open-new-window "https://help.penpot.app")}
+        [:span (tr "labels.help-center")]]
+       [:li {:on-click #(dom/open-new-window "https://community.penpot.app")}
+        [:span (tr "labels.community")]]
+       [:li {:on-click #(dom/open-new-window "https://www.youtube.com/c/Penpot")}
+        [:span (tr "labels.tutorials")]]
+       [:li {:on-click show-release-notes}
+        [:span (tr "labels.release-notes")]]
+       [:li.separator {:on-click #(dom/open-new-window "https://penpot.app/libraries-templates.html")}
+        [:span (tr "labels.libraries-and-templates")]]
+       [:li {:on-click #(dom/open-new-window "https://github.com/penpot/penpot")}
+        [:span (tr "labels.github-repo")]]
+       [:li  {:on-click #(dom/open-new-window "https://penpot.app/terms.html")}
+        [:span (tr "auth.terms-of-service")]]
+       [:li.separator {:on-click #(st/emit! (when (contains? layout :collapse-left-sidebar) (dw/toggle-layout-flag :collapse-left-sidebar))
+                                            (-> (dw/toggle-layout-flag :shortcuts)
+                                                (vary-meta assoc ::ev/origin "workspace-header")))}
+        [:span (tr "label.shortcuts")]
+        [:span.shortcut (sc/get-tooltip :show-shortcuts)]]
+
+       (when (contains? @cf/flags :user-feedback)
+         [:*
+          [:li.feedback {:on-click #(st/emit! (rt/nav-new-window* {:rname :settings-feedback}))}
+           [:span (tr "labels.give-feedback")]]])]]]))
 
 ;; --- Header Component
 
@@ -401,12 +437,12 @@
         go-back
         (mf/use-callback
          (mf/deps project)
-         (st/emitf (dw/go-to-dashboard project)))
+         #(st/emit! (dw/go-to-dashboard project)))
 
         go-viewer
         (mf/use-callback
          (mf/deps file page-id)
-         (st/emitf (dw/go-to-viewer params)))]
+         #(st/emit! (dw/go-to-viewer params)))]
 
     [:header.workspace-header
      [:div.left-area
@@ -429,6 +465,7 @@
        [:& export-progress-widget]
        [:button.document-history
         {:alt (tr "workspace.sidebar.history" (sc/get-tooltip :toggle-history))
+         :aria-label (tr "workspace.sidebar.history" (sc/get-tooltip :toggle-history))
          :class (when (contains? layout :document-history) "selected")
          :on-click #(st/emit! (-> (dw/toggle-layout-flag :document-history)
                                   (vary-meta assoc ::ev/origin "workspace-header")))}

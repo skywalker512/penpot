@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.viewport
   (:require
@@ -10,6 +10,7 @@
    [app.common.data :as d]
    [app.common.data.macros :as dm]
    [app.common.geom.shapes :as gsh]
+   [app.common.pages.helpers :as cph]
    [app.main.refs :as refs]
    [app.main.ui.context :as ctx]
    [app.main.ui.hooks :as ui-hooks]
@@ -19,7 +20,7 @@
    [app.main.ui.workspace.shapes :as shapes]
    [app.main.ui.workspace.shapes.text.editor :as editor]
    [app.main.ui.workspace.shapes.text.text-edition-outline :refer [text-edition-outline]]
-   [app.main.ui.workspace.shapes.text.viewport-texts :as stv]
+   [app.main.ui.workspace.shapes.text.viewport-texts-html :as stvh]
    [app.main.ui.workspace.viewport.actions :as actions]
    [app.main.ui.workspace.viewport.comments :as comments]
    [app.main.ui.workspace.viewport.drawarea :as drawarea]
@@ -40,7 +41,7 @@
    [app.main.ui.workspace.viewport.widgets :as widgets]
    [beicon.core :as rx]
    [debug :refer [debug?]]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 ;; --- Viewport
 
@@ -52,6 +53,7 @@
                 panning
                 selrect
                 transform
+                highlighted
                 vbox
                 vport
                 zoom
@@ -71,8 +73,8 @@
         focus             (mf/deref refs/workspace-focus-selected)
 
         objects-ref       (mf/use-memo #(refs/workspace-page-objects-by-id page-id))
-        base-objects      (-> (mf/deref objects-ref)
-                              (ui-hooks/with-focus-objects focus))
+        objects           (mf/deref objects-ref)
+        base-objects      (-> objects (ui-hooks/with-focus-objects focus))
 
         modifiers         (mf/deref refs/workspace-modifiers)
 
@@ -90,7 +92,7 @@
         hover             (mf/use-state nil)
         hover-disabled?   (mf/use-state false)
         frame-hover       (mf/use-state nil)
-        active-frames     (mf/use-state {})
+        active-frames     (mf/use-state #{})
 
         ;; REFS
         viewport-ref      (mf/use-ref nil)
@@ -155,24 +157,30 @@
         show-draw-area?          drawing-obj
         show-gradient-handlers?  (= (count selected) 1)
         show-grids?              (contains? layout :display-grid)
-        show-outlines?           (and (nil? transform) (not edition) (not drawing-obj) (not (#{:comments :path :curve} drawing-tool)))
+
+        show-frame-outline?      (= transform :move)
+        show-outlines?           (and (nil? transform)
+                                      (not edition)
+                                      (not drawing-obj)
+                                      (not (#{:comments :path :curve} drawing-tool)))
+
         show-pixel-grid?         (and (contains? layout :show-pixel-grid)
                                       (>= zoom 8))
+        show-text-editor?        (and editing-shape (= :text (:type editing-shape)))
         show-presence?           page-id
         show-prototypes?         (= options-mode :prototype)
-        show-selection-handlers? (and (seq selected) (not edition))
+        show-selection-handlers? (and (seq selected) (not show-text-editor?))
         show-snap-distance?      (and (contains? layout :dynamic-alignment)
                                       (= transform :move)
                                       (seq selected))
         show-snap-points?        (and (or (contains? layout :dynamic-alignment)
                                           (contains? layout :snap-grid))
                                       (or drawing-obj transform))
-        show-selrect?            (and selrect (empty? drawing) (not edition))
+        show-selrect?            (and selrect (empty? drawing) (not text-editing?))
         show-measures?           (and (not transform) (not node-editing?) show-distances?)
         show-artboard-names?     (contains? layout :display-artboard-names)
         show-rules?              (and (contains? layout :rules) (not (contains? layout :hide-ui)))
 
-        show-text-editor?        (and editing-shape (= :text (:type editing-shape)))
 
         disabled-guides?         (or drawing-tool transform)]
 
@@ -183,14 +191,22 @@
     (hooks/setup-hover-shapes page-id move-stream base-objects transform selected mod? hover hover-ids @hover-disabled? focus zoom)
     (hooks/setup-viewport-modifiers modifiers base-objects)
     (hooks/setup-shortcuts node-editing? drawing-path?)
-    (hooks/setup-active-frames base-objects vbox hover active-frames zoom)
+    (hooks/setup-active-frames base-objects hover-ids selected active-frames zoom transform vbox)
 
     [:div.viewport
      [:div.viewport-overlays {:ref overlays-ref}
-      (when show-text-editor?
-        [:& editor/text-editor-viewport {:shape editing-shape
-                                         :viewport-ref viewport-ref
-                                         :zoom zoom}])
+      ;; The behaviour inside a foreign object is a bit different that in plain HTML so we wrap
+      ;; inside a foreign object "dummy" so this awkward behaviour is take into account
+      [:svg {:style {:top 0 :left 0 :position "fixed" :width "100%" :height "100%" :opacity 0}}
+       [:foreignObject {:x 0 :y 0 :width "100%" :height "100%"}
+        [:div {:style {:pointer-events "none"}}
+         [:& stvh/viewport-texts
+          {:key (dm/str "texts-" page-id)
+           :page-id page-id
+           :objects objects
+           :modifiers modifiers
+           :edition edition}]]]]
+
       (when show-comments?
         [:& comments/comments-layer {:vbox vbox
                                      :vport vport
@@ -232,22 +248,6 @@
                                :objects base-objects
                                :active-frames @active-frames}]]]]
 
-     [:svg.render-shapes
-      {:id "text-position-layer"
-       :xmlns "http://www.w3.org/2000/svg"
-       :xmlnsXlink "http://www.w3.org/1999/xlink"
-       :preserveAspectRatio "xMidYMid meet"
-       :key (str "text-position-layer" page-id)
-       :width (:width vport 0)
-       :height (:height vport 0)
-       :view-box (utils/format-viewbox vbox)}
-
-      [:g {:pointer-events "none" :opacity 0}
-       [:& stv/viewport-texts {:key (dm/str "texts-" page-id)
-                               :page-id page-id
-                               :objects base-objects
-                               :edition edition}]]]
-
      [:svg.viewport-controls
       {:xmlns "http://www.w3.org/2000/svg"
        :xmlnsXlink "http://www.w3.org/1999/xlink"
@@ -257,6 +257,7 @@
        :ref viewport-ref
        :class (when drawing-tool "drawing")
        :style {:cursor @cursor}
+       :fill "none"
 
        :on-click         on-click
        :on-context-menu  on-context-menu
@@ -273,16 +274,24 @@
        :on-pointer-up    on-pointer-up}
 
       [:g {:style {:pointer-events (if disable-events? "none" "auto")}}
+       (when show-text-editor?
+         [:& editor/text-editor-svg {:shape editing-shape}])
+
+       (when show-frame-outline?
+         [:& outline/shape-outlines
+          {:objects base-objects
+           :hover #{(->> @hover-ids
+                         (filter #(cph/frame-shape? (get base-objects %)))
+                         (remove selected)
+                         (first))}
+           :zoom zoom}])
+
        (when show-outlines?
          [:& outline/shape-outlines
           {:objects base-objects
            :selected selected
-           :hover (cond
-                    (and @hover (or @mod? (not= :frame (:type @hover))))
-                    #{(:id @hover)}
-
-                    @frame-hover
-                    #{@frame-hover})
+           :hover #{(:id @hover) @frame-hover}
+           :highlighted highlighted
            :edition edition
            :zoom zoom}])
 
@@ -297,7 +306,8 @@
 
        (when show-text-editor?
          [:& text-edition-outline
-          {:shape (get base-objects edition)}])
+          {:shape (get base-objects edition)
+           :zoom zoom}])
 
        (when show-measures?
          [:& msr/measurement
@@ -308,10 +318,9 @@
            :zoom zoom}])
 
        [:& widgets/frame-titles
-        {:objects objects-modified
+        {:objects base-objects
          :selected selected
          :zoom zoom
-         :modifiers modifiers
          :show-artboard-names? show-artboard-names?
          :on-frame-enter on-frame-enter
          :on-frame-leave on-frame-leave
@@ -424,12 +433,12 @@
             :shapes selected-shapes
             :zoom zoom
             :edition edition
-            :disable-handlers (or drawing-tool edition @space?)}]])
+            :disable-handlers (or drawing-tool edition @space?)}]
 
-       (when show-prototypes?
-         [:& interactions/interactions
-          {:selected selected
-           :zoom zoom
-           :objects objects-modified
-           :current-transform transform
-           :hover-disabled? hover-disabled?}])]]]))
+          (when show-prototypes?
+            [:& interactions/interactions
+             {:selected selected
+              :zoom zoom
+              :objects objects-modified
+              :current-transform transform
+              :hover-disabled? hover-disabled?}])])]]]))

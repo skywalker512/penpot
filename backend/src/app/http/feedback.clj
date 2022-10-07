@@ -2,11 +2,12 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.http.feedback
   "A general purpose feedback module."
   (:require
+   [app.common.data :as d]
    [app.common.exceptions :as ex]
    [app.common.spec :as us]
    [app.config :as cf]
@@ -44,7 +45,8 @@
   [{:keys [pool] :as cfg} {:keys [profile-id] :as request}]
   (let [ftoken (cf/get :feedback-token ::no-token)
         token  (yrq/get-header request "x-feedback-token")
-        params (::yrq/params request)]
+        params (d/merge (:params request)
+                        (:body-params request))]
     (cond
       (uuid? profile-id)
       (let [profile (profile/retrieve-profile-data pool profile-id)

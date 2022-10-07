@@ -2,21 +2,25 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.colorpicker.color-inputs
   (:require
    [app.common.math :as mth]
    [app.util.color :as uc]
    [app.util.dom :as dom]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
+
+(defn parse-hex
+  [val]
+  (if (= (first val) \#)
+    val
+    (str \# val)))
 
 (mf/defc color-inputs [{:keys [type color disable-opacity on-change]}]
   (let [{red :r green :g blue :b
          hue :h saturation :s value :v
          hex :hex alpha :alpha} color
-
-        parse-hex (fn [val] (if (= (first val) \#) val (str \# val)))
 
         refs {:hex   (mf/use-ref nil)
               :r     (mf/use-ref nil)

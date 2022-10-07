@@ -2,17 +2,18 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.main.ui.workspace.viewport.frame-grid
   (:require
    [app.common.data :as d]
    [app.common.geom.shapes :as gsh]
    [app.common.math :as mth]
+   [app.common.types.shape-tree :as ctst]
    [app.common.uuid :as uuid]
    [app.main.refs :as refs]
    [app.util.geom.grid :as gg]
-   [rumext.alpha :as mf]))
+   [rumext.v2 :as mf]))
 
 (mf/defc square-grid [{:keys [frame zoom grid] :as props}]
   (let [grid-id (mf/use-memo #(uuid/next))
@@ -126,13 +127,15 @@
 (mf/defc frame-grid
   {::mf/wrap [mf/memo]}
   [{:keys [zoom transform selected focus]}]
-  (let [frames     (mf/deref refs/workspace-frames)
-        moving     (when (= :move transform) selected)
-        is-moving? #(contains? moving (:id %))]
+  (let [frames        (mf/deref refs/workspace-frames)
+        transforming  (when (some? transform) selected)
+        is-transform? #(contains? transforming (:id %))]
 
     [:g.grid-display {:style {:pointer-events "none"}}
-     (for [frame (remove is-moving? frames)]
-       (when (or (empty? focus) (contains? focus (:id frame)))
+     (for [frame frames]
+       (when (and (not (is-transform? frame))
+                  (not (ctst/rotated-frame? frame))
+                  (or (empty? focus) (contains? focus (:id frame))))
          [:& grid-display-frame {:key (str "grid-" (:id frame))
                                  :zoom zoom
                                  :frame (gsh/transform-shape frame)}]))]))
