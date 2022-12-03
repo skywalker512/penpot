@@ -7,11 +7,15 @@
 (ns app.main.ui.viewer.handoff.code
   (:require
    ["js-beautify" :as beautify]
+   [app.common.data.macros :as dm]
    [app.common.geom.shapes :as gsh]
+   [app.common.uuid :as uuid]
    [app.main.data.events :as ev]
+   [app.main.refs :as refs]
    [app.main.store :as st]
    [app.main.ui.components.code-block :refer [code-block]]
    [app.main.ui.components.copy-button :refer [copy-button]]
+   [app.main.ui.hooks :as hooks]
    [app.main.ui.icons :as i]
    [app.util.code-gen :as cg]
    [app.util.dom :as dom]
@@ -19,8 +23,10 @@
    [potok.core :as ptk]
    [rumext.v2 :as mf]))
 
-(defn generate-markup-code [_type shapes]
-  (let [frame (dom/query js/document "#svg-frame")
+(defn generate-markup-code [_type shapes from]
+  (let [frame (if (= from :workspace)
+                (dom/query js/document (dm/str "#shape-" uuid/zero))
+                (dom/query js/document "#svg-frame"))
         markup-shape
         (fn [shape]
           (let [selector (str "#shape-" (:id shape) (when (= :text (:type shape)) " .root"))]
@@ -40,17 +46,27 @@
     (cond-> code
       (= type "svg") (beautify/html #js {"indent_size" 2}))))
 
-(mf/defc code
-  [{:keys [shapes frame on-expand]}]
-  (let [style-type (mf/use-state "css")
-        markup-type (mf/use-state "svg")
-        shapes (->> shapes
-                    (map #(gsh/translate-to-frame % frame)))
+(defn get-flex-elements [page-id shapes]
+  (let [ids (mapv :id shapes)
+        ids (hooks/use-equal-memo ids)
+        get-layout-children-refs (mf/use-memo (mf/deps ids page-id) #(refs/get-flex-child-viewer ids page-id))]
 
+    (mf/deref get-layout-children-refs)))
+
+(mf/defc code
+  [{:keys [shapes frame on-expand from]}]
+  (let [style-type  (mf/use-state "css")
+        markup-type (mf/use-state "svg")
+        shapes      (->> shapes
+                         (map #(gsh/translate-to-frame % frame)))
+        route      (mf/deref refs/route)
+        page-id    (:page-id (:query-params route))
+        flex-items (get-flex-elements page-id shapes)
+        shapes     (map #(assoc % :flex-items flex-items) shapes)
         style-code (-> (cg/generate-style-code @style-type shapes)
                        (format-code "css"))
 
-        markup-code (-> (mf/use-memo (mf/deps shapes) #(generate-markup-code @markup-type shapes))
+        markup-code (-> (mf/use-memo (mf/deps shapes) #(generate-markup-code @markup-type shapes from))
                         (format-code "svg"))
 
         on-markup-copied
@@ -67,15 +83,14 @@
          (fn []
            (st/emit! (ptk/event ::ev/event
                                 {::ev/name "copy-handoff-style"
-                                 :type @style-type}))))
-        ]
+                                 :type @style-type}))))]
 
     [:div.element-options
      [:div.code-block
       [:div.code-row-lang "CSS"
 
        [:button.expand-button
-        {:on-click on-expand }
+        {:on-click on-expand}
         i/full-screen]
 
        [:& copy-button {:data style-code
@@ -96,6 +111,4 @@
                         :on-copied on-markup-copied}]]
       [:div.code-row-display
        [:& code-block {:type @markup-type
-                       :code markup-code}]]]
-
-     ]))
+                       :code markup-code}]]]]))

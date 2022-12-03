@@ -23,29 +23,31 @@
              :rx "border-radius"
              :r1 "border-radius"}
    :format  {:rotation #(str/fmt "rotate(%sdeg)" %)
-             :r1 #(apply str/fmt "%spx, %spx, %spx, %spx" %)}
+             :r1 #(apply str/fmt "%spx, %spx, %spx, %spx" %)
+             :width (partial fmt/format-size :width)
+             :height (partial fmt/format-size :height)}
    :multi   {:r1 [:r1 :r2 :r3 :r4]}})
 
 (defn copy-data
   ([shape]
    (apply copy-data shape properties))
-  ([shape & properties]
+  ([shape & properties] 
    (cg/generate-css-props shape properties params)))
 
 (mf/defc layout-block
   [{:keys [shape]}]
   (let [selrect (:selrect shape)
-        {:keys [width height x y]} selrect]
+        {:keys [x y]} selrect]
     [:*
      [:div.attributes-unit-row
       [:div.attributes-label (tr "handoff.attributes.layout.width")]
-      [:div.attributes-value (fmt/format-pixels width)]
-      [:& copy-button {:data (copy-data selrect :width)}]]
+      [:div.attributes-value (fmt/format-size :width (:width shape) shape)]
+      [:& copy-button {:data (copy-data shape :width)}]]
 
      [:div.attributes-unit-row
       [:div.attributes-label (tr "handoff.attributes.layout.height")]
-      [:div.attributes-value (fmt/format-pixels height)]
-      [:& copy-button {:data (copy-data selrect :height)}]]
+      [:div.attributes-value (fmt/format-size :height (:height shape) shape)]
+      [:& copy-button {:data (copy-data shape :height)}]]
 
      (when (not= (:x shape) 0)
        [:div.attributes-unit-row
@@ -86,9 +88,10 @@
   [{:keys [shapes]}]
   [:div.attributes-block
    [:div.attributes-block-title
-    [:div.attributes-block-title-text (tr "handoff.attributes.layout")]
+    [:div.attributes-block-title-text (tr "handoff.attributes.size")]
     (when (= (count shapes) 1)
       [:& copy-button {:data (copy-data (first shapes))}])]
 
    (for [shape shapes]
-     [:& layout-block {:shape shape}])])
+     [:& layout-block {:shape shape
+                       :key (:id shape)}])])

@@ -11,6 +11,7 @@
    [app.common.pages :as cp]
    [app.common.pages.helpers :as cph]
    [app.common.types.shape-tree :as ctt]
+   [app.common.uuid :as uuid]
    [app.main.data.shortcuts :as dsc]
    [app.main.data.workspace :as dw]
    [app.main.data.workspace.path.shortcuts :as psc]
@@ -31,14 +32,14 @@
    [rumext.v2 :as mf])
   (:import goog.events.EventType))
 
-(defn setup-dom-events [viewport-ref overlays-ref zoom disable-paste in-viewport?]
+(defn setup-dom-events [viewport-ref zoom disable-paste in-viewport? workspace-read-only?]
   (let [on-key-down       (actions/on-key-down)
         on-key-up         (actions/on-key-up)
         on-mouse-move     (actions/on-mouse-move viewport-ref zoom)
-        on-mouse-wheel    (actions/on-mouse-wheel viewport-ref overlays-ref zoom)
-        on-paste          (actions/on-paste disable-paste in-viewport?)]
+        on-mouse-wheel    (actions/on-mouse-wheel viewport-ref zoom)
+        on-paste          (actions/on-paste disable-paste in-viewport? workspace-read-only?)]
     (mf/use-layout-effect
-     (mf/deps on-key-down on-key-up on-mouse-move on-mouse-wheel on-paste)
+     (mf/deps on-key-down on-key-up on-mouse-move on-mouse-wheel on-paste workspace-read-only?)
      (fn []
        (let [node (mf/ref-val viewport-ref)
              keys [(events/listen js/document EventType.KEYDOWN on-key-down)
@@ -62,16 +63,16 @@
        ;; We schedule the event so it fires after `initialize-page` event
        (timers/schedule #(st/emit! (dw/initialize-viewport size)))))))
 
-(defn setup-cursor [cursor alt? mod? space? panning drawing-tool drawing-path? path-editing?]
+(defn setup-cursor [cursor alt? mod? space? panning drawing-tool drawing-path? path-editing? workspace-read-only?]
   (mf/use-effect
-   (mf/deps @cursor @alt? @mod? @space? panning drawing-tool drawing-path? path-editing?)
+   (mf/deps @cursor @alt? @mod? @space? panning drawing-tool drawing-path? path-editing? workspace-read-only?)
    (fn []
      (let [show-pen? (or (= drawing-tool :path)
                          (and drawing-path?
                               (not= drawing-tool :curve)))
            new-cursor
            (cond
-             (and @mod? @space?)            (utils/get-cursor :zoom)
+             (and @mod? @space?)             (utils/get-cursor :zoom)
              (or panning @space?)            (utils/get-cursor :hand)
              (= drawing-tool :comments)      (utils/get-cursor :comments)
              (= drawing-tool :frame)         (utils/get-cursor :create-artboard)
@@ -80,7 +81,10 @@
              show-pen?                       (utils/get-cursor :pen)
              (= drawing-tool :curve)         (utils/get-cursor :pencil)
              drawing-tool                    (utils/get-cursor :create-shape)
-             (and @alt? (not path-editing?)) (utils/get-cursor :duplicate)
+             (and
+              @alt?
+              (not path-editing?)
+              (not workspace-read-only?))    (utils/get-cursor :duplicate)
              :else                           (utils/get-cursor :pointer-inner))]
 
        (when (not= @cursor new-cursor)
@@ -104,7 +108,8 @@
             (some #(cph/is-parent? objects % group-id))
             (not))))
 
-(defn setup-hover-shapes [page-id move-stream objects transform selected mod? hover hover-ids hover-disabled? focus zoom]
+(defn setup-hover-shapes
+  [page-id move-stream objects transform selected mod? hover hover-ids hover-top-frame-id hover-disabled? focus zoom]
   (let [;; We use ref so we don't recreate the stream on a change
         zoom-ref (mf/use-ref zoom)
         mod-ref (mf/use-ref @mod?)
@@ -125,12 +130,15 @@
                  rect (gsh/center->rect point (/ 5 zoom) (/ 5 zoom))]
              (if (mf/ref-val hover-disabled-ref)
                (rx/of nil)
-               (uw/ask-buffered!
-                 {:cmd :selection/query
-                  :page-id page-id
-                  :rect rect
-                  :include-frames? true
-                  :clip-children? (not mod?)})))))
+               (->> (uw/ask-buffered!
+                     {:cmd :selection/query
+                      :page-id page-id
+                      :rect rect
+                      :include-frames? true
+                      :clip-children? (not mod?)})
+                    ;; When the ask-buffered is canceled returns null. We filter them
+                    ;; to improve the behavior
+                    (rx/filter some?))))))
 
         over-shapes-stream
         (mf/use-memo
@@ -143,9 +151,10 @@
                   (rx/map #(deref last-point-ref)))
 
              (->> move-stream
+                  (rx/tap #(reset! last-point-ref %))
                   ;; When transforming shapes we stop querying the worker
                   (rx/merge-map query-point)
-                  (rx/tap #(reset! last-point-ref %))))))]
+                  ))))]
 
     ;; Refresh the refs on a value change
     (mf/use-effect
@@ -213,7 +222,8 @@
                   (first)
                   (get objects))]
          (reset! hover hover-shape)
-         (reset! hover-ids ids))))))
+         (reset! hover-ids ids)
+         (reset! hover-top-frame-id (ctt/top-nested-frame objects (deref last-point-ref))))))))
 
 (defn setup-viewport-modifiers
   [modifiers objects]
@@ -221,7 +231,7 @@
         (mf/use-memo
          (mf/deps objects)
          #(ctt/get-root-shapes-ids objects))
-        modifiers (select-keys modifiers root-frame-ids)]
+        modifiers (select-keys modifiers (conj root-frame-ids uuid/zero))]
     (sfd/use-dynamic-modifiers objects globals/document modifiers)))
 
 (defn inside-vbox [vbox objects frame-id]

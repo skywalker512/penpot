@@ -13,9 +13,11 @@
    [app.common.math :as mth]
    [app.common.pages.helpers :as cph]
    [app.common.text :as txt]
+   [app.common.types.modifiers :as ctm]
    [app.common.uuid :as uuid]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.common :as dwc]
+   [app.main.data.workspace.modifiers :as dwm]
    [app.main.data.workspace.selection :as dws]
    [app.main.data.workspace.shapes :as dwsh]
    [app.main.data.workspace.state-helpers :as wsh]
@@ -71,11 +73,15 @@
                (when (and (not= content (:content shape))
                           (some? (:current-page-id state)))
                  (rx/of
-                  (dch/update-shapes [id] (fn [shape]
-                                            (-> shape
-                                                (assoc :content content)
-                                                (merge modifiers))))
-                  (dwu/commit-undo-transaction)))))
+                  (dch/update-shapes
+                   [id]
+                   (fn [shape]
+                     (let [{:keys [width height]} modifiers]
+                       (-> shape
+                           (assoc :content content)
+                           (cond-> (or (some? width) (some? height))
+                             (gsh/transform-shape (ctm/change-size shape width height)))))))
+                  (dwu/commit-undo-transaction (:id shape))))))
 
             (when (some? id)
               (rx/of (dws/deselect-shape id)
@@ -315,23 +321,29 @@
   [id new-width new-height]
   (ptk/reify ::resize-text
     ptk/WatchEvent
-    (watch [_ _ _]
-      (letfn [(update-fn [shape]
-                (let [{:keys [selrect grow-type]} shape
-                      {shape-width :width shape-height :height} selrect
-                      modifier-width (gsh/resize-modifiers shape :width new-width)
-                      modifier-height (gsh/resize-modifiers shape :height new-height)]
-                  (cond-> shape
-                    (and (not-changed? shape-width new-width) (= grow-type :auto-width))
-                    (-> (assoc :modifiers modifier-width)
-                        (gsh/transform-shape))
+    (watch [_ state _]
+      (let [shape (wsh/lookup-shape state id)]
+        (letfn [(update-fn [shape]
+                  (let [{:keys [selrect grow-type]} shape
+                        {shape-width :width shape-height :height} selrect
 
-                    (and (not-changed? shape-height new-height)
-                         (or (= grow-type :auto-height) (= grow-type :auto-width)))
-                    (-> (assoc :modifiers modifier-height)
-                        (gsh/transform-shape)))))]
+                        shape
+                        (cond-> shape
+                          (and (not-changed? shape-width new-width) (= grow-type :auto-width))
+                          (gsh/transform-shape (ctm/change-dimensions-modifiers shape :width new-width)))
 
-        (rx/of (dch/update-shapes [id] update-fn {:reg-objects? true :save-undo? false}))))))
+                        shape
+                        (cond-> shape
+                         (and (not-changed? shape-height new-height)
+                              (or (= grow-type :auto-height) (= grow-type :auto-width)))
+                         (gsh/transform-shape (ctm/change-dimensions-modifiers shape :height new-height)))]
+
+                    shape))]
+
+          (when (or (and (not-changed? (:width shape) new-width) (= (:grow-type shape) :auto-width))
+                    (and (not-changed? (:height shape) new-height)
+                         (or (= (:grow-type shape) :auto-height) (= (:grow-type shape) :auto-width))))
+            (rx/of (dch/update-shapes [id] update-fn {:reg-objects? true :save-undo? false}))))))))
 
 (defn save-font
   [data]
@@ -346,18 +358,13 @@
 (defn apply-text-modifier
   [shape {:keys [width height position-data]}]
 
-  (let [modifier-width (when width (gsh/resize-modifiers shape :width width))
-        modifier-height (when height (gsh/resize-modifiers shape :height height))
-
-        new-shape
+  (let [new-shape
         (cond-> shape
-          (some? modifier-width)
-          (-> (assoc :modifiers modifier-width)
-              (gsh/transform-shape))
+          (some? width)
+          (gsh/transform-shape (ctm/change-dimensions-modifiers shape :width width))
 
-          (some? modifier-height)
-          (-> (assoc :modifiers modifier-height)
-              (gsh/transform-shape))
+          (some? height)
+          (gsh/transform-shape (ctm/change-dimensions-modifiers shape :height height))
 
           (some? position-data)
           (assoc :position-data position-data))
@@ -366,10 +373,8 @@
         (gpt/subtract (gpt/point (:selrect new-shape))
                       (gpt/point (:selrect shape)))
 
-
         new-shape
         (update new-shape :position-data gsh/move-position-data (:x delta-move) (:y delta-move))]
-
 
     new-shape))
 
@@ -378,7 +383,18 @@
   (ptk/reify ::update-text-modifier
     ptk/UpdateEvent
     (update [_ state]
-      (update-in state [:workspace-text-modifier id] (fnil merge {}) props))))
+      (update-in state [:workspace-text-modifier id] (fnil merge {}) props))
+
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [shape (wsh/lookup-shape state id)]
+        (when (or (and (some? (:width props))
+                       (not (mth/close? (:width props) (:width shape))))
+                  (and (some? (:height props))
+                       (not (mth/close? (:height props) (:height shape)))))
+
+          (let [modif-tree (dwm/create-modif-tree [id] (ctm/reflow-modifiers))]
+            (rx/of (dwm/set-modifiers modif-tree))))))))
 
 (defn clean-text-modifier
   [id]
@@ -394,7 +410,11 @@
   (ptk/reify ::remove-text-modifier
     ptk/UpdateEvent
     (update [_ state]
-      (d/dissoc-in state [:workspace-text-modifier id]))))
+      (d/dissoc-in state [:workspace-text-modifier id]))
+
+    ptk/WatchEvent
+    (watch [_ _ _]
+      (rx/of (dwm/apply-modifiers)))))
 
 (defn commit-position-data
   []
@@ -402,7 +422,7 @@
     ptk/UpdateEvent
     (update [_ state]
       (let [ids (keys (::update-position-data state))]
-        (update state :workspace-text-modifiers #(apply dissoc % ids))))
+        (update state :workspace-text-modifier #(apply dissoc % ids))))
 
     ptk/WatchEvent
     (watch [_ state _]

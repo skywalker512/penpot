@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.common.exceptions
   "A helpers for work with exceptions."
@@ -47,6 +47,10 @@
   `(try* (^:once fn* [] ~@exprs) (constantly nil)))
 
 (defmacro try
+  [& exprs]
+  `(try* (^:once fn* [] ~@exprs) identity))
+
+(defmacro try!
   [& exprs]
   `(try* (^:once fn* [] ~@exprs) identity))
 

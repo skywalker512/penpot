@@ -2,10 +2,11 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.common.types.container
   (:require
+   [app.common.data.macros :as dm]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.spec :as us]
@@ -14,13 +15,12 @@
 
 (s/def ::type #{:page :component})
 (s/def ::id uuid?)
-(s/def ::name string?)
-(s/def ::path (s/nilable string?))
+(s/def ::name ::us/string)
+(s/def ::path (s/nilable ::us/string))
 
 (s/def ::container
-  ;; (s/keys :req-un [::id ::name ::ctst/objects]
   (s/keys :req-un [::id ::name]
-          :opt-un [::type ::path]))
+          :opt-un [::type ::path ::ctst/objects]))
 
 (defn make-container
   [page-or-component type]
@@ -41,8 +41,8 @@
   (us/assert uuid? id)
 
   (-> (if (= type :page)
-        (get-in file [:pages-index id])
-        (get-in file [:components id]))
+        (dm/get-in file [:pages-index id])
+        (dm/get-in file [:components id]))
       (assoc :type type)))
 
 (defn get-shape

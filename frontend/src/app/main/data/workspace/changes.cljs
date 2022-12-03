@@ -78,7 +78,7 @@
     ptk/EffectEvent
     (effect [_ state _]
       (doseq [[page-id changes] (::update-changes state)]
-        (uw/ask! {:cmd :update-page-indices
+        (uw/ask! {:cmd :update-page-index
                   :page-id page-id
                   :changes changes})))))
 
@@ -150,7 +150,8 @@
          :hint-origin (ptk/type origin)
          :changes redo-changes
          :page-id page-id
-         :frames frames})
+         :frames frames
+         :save-undo? save-undo?})
 
       ptk/UpdateEvent
       (update [_ state]

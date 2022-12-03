@@ -8,11 +8,13 @@
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
    [app.common.geom.shapes.text :as gsht]
    [app.common.math :as mth]
    [app.common.pages.helpers :as cph]
    [app.common.text :as txt]
+   [app.common.types.modifiers :as ctm]
    [app.main.data.workspace.texts :as dwt]
    [app.main.fonts :as fonts]
    [app.main.refs :as refs]
@@ -31,22 +33,20 @@
   (-> shape
       (cond-> (some? (meta (:position-data shape)))
         (with-meta (meta (:position-data shape))))
-      (dissoc :position-data :transform :transform-inverse)))
+      (dissoc :position-data)))
 
-(defn strip-modifier
-  [modifier]
-  (if (or (some? (dm/get-in modifier [:modifiers :resize-vector]))
-          (some? (dm/get-in modifier [:modifiers :resize-vector-2])))
-    modifier
-    (d/update-when modifier :modifiers dissoc :displacement :rotation)))
+(defn fix-position [shape modifier]
+  (let [shape' (gsh/transform-shape shape modifier)
+        ;; We need to remove the movement because the dynamic modifiers will have move it
+        deltav (gpt/to-vec (gpt/point (:selrect shape'))
+                           (gpt/point (:selrect shape)))]
+    (gsh/transform-shape shape (ctm/move modifier deltav))))
 
 (defn process-shape [modifiers {:keys [id] :as shape}]
-  (let [modifier (-> (get modifiers id) strip-modifier)
-        shape (cond-> shape
-                (not (gsh/empty-modifiers? (:modifiers modifier)))
-                (-> (assoc :grow-type :fixed)
-                    (merge modifier) gsh/transform-shape))]
+  (let [modifier (dm/get-in modifiers [id :modifiers])]
     (-> shape
+        (cond-> (and (some? modifier) (not (ctm/only-move? modifier)))
+          (fix-position modifier))
         (cond-> (nil? (:position-data shape))
           (assoc :migrate true))
         strip-position-data)))
@@ -88,20 +88,26 @@
 
 (defn- update-text-modifier
   [{:keys [grow-type id]} node]
-  (p/let [position-data (tsp/calc-position-data id)
-          props {:position-data position-data}
+  (ts/raf
+   #(p/let [position-data (tsp/calc-position-data id)
+            props {:position-data position-data}
 
-          props
-          (if (contains? #{:auto-height :auto-width} grow-type)
-            (let [{:keys [width height]} (-> (dom/query node ".paragraph-set") (dom/get-client-size))
-                  width (mth/ceil width)
-                  height (mth/ceil height)]
-              (if (and (not (mth/almost-zero? width)) (not (mth/almost-zero? height)))
-                (assoc props :width width :height height)
-                props))
-            props)]
+            props
+            (if (contains? #{:auto-height :auto-width} grow-type)
+              (let [{:keys [width height]} (-> (dom/query node ".paragraph-set") (dom/get-client-size))
+                    width (mth/ceil width)
+                    height (mth/ceil height)]
+                (if (and (not (mth/almost-zero? width)) (not (mth/almost-zero? height)))
+                  (cond-> props
+                    (= grow-type :auto-width)
+                    (assoc :width width)
 
-    (st/emit! (dwt/update-text-modifier id props))))
+                    (or (= grow-type :auto-height) (= grow-type :auto-width))
+                    (assoc :height height))
+                  props))
+              props)]
+
+      (st/emit! (dwt/update-text-modifier id props)))))
 
 (mf/defc text-container
   {::mf/wrap-props false
@@ -122,6 +128,21 @@
                          :shape shape
                          :grow-type (:grow-type shape)}]))
 
+(defn text-properties-equal?
+  [shape other]
+  (or (identical? shape other)
+      (and
+       ;; Check if both shapes are equivalent removing their geometry data
+       (= (dissoc shape :migrate :points :selrect :height :width :x :y)
+          (dissoc other :migrate :points :selrect :height :width :x :y))
+
+       ;; Check if the position and size is close. If any of these changes the shape has changed
+       ;; and if not there is no geometry relevant change
+       (mth/close? (:x shape) (:x other))
+       (mth/close? (:y shape) (:y other))
+       (mth/close? (:width shape) (:width other))
+       (mth/close? (:height shape) (:height other)))))
+
 (mf/defc viewport-texts-wrapper
   {::mf/wrap-props false
    ::mf/wrap [mf/memo #(mf/deferred % ts/idle-then-raf)]}
@@ -136,16 +157,16 @@
         (fn [id]
           (let [new-shape (get text-shapes id)
                 old-shape (get prev-text-shapes id)
-                old-modifiers (-> (get prev-modifiers id) strip-modifier)
-                new-modifiers (-> (get modifiers id) strip-modifier)
+                old-modifiers (ctm/select-geometry (get prev-modifiers id))
+                new-modifiers (ctm/select-geometry (get modifiers id))
 
-                remote? (some? (-> new-shape meta :session-id)) ]
-
+                remote? (some? (-> new-shape meta :session-id))]
             (or (and (not remote?)
-                     (not (identical? old-shape new-shape))
-                     (not= (dissoc old-shape :migrate)
-                           (dissoc new-shape :migrate)))
-                (not= new-modifiers old-modifiers)
+                     (not (text-properties-equal? old-shape new-shape)))
+
+                (and (not= new-modifiers old-modifiers)
+                     (or (not (ctm/only-move? new-modifiers))
+                         (not (ctm/only-move? old-modifiers))))
 
                 ;; When the position data is nil we force to recalculate
                 (:migrate new-shape))))
@@ -162,7 +183,7 @@
 
     [:*
      (for [{:keys [id] :as shape} changed-texts]
-       [:& text-container {:shape (gsh/transform-shape shape)
+       [:& text-container {:shape shape
                            :on-update (if (some? (get modifiers (:id shape)))
                                         handle-update-modifier
                                         handle-update-shape)
@@ -189,16 +210,12 @@
                 (some? editor-state)
                 (update-with-editor-state editor-state))
 
-        ;; When we have a text with grow-type :auto-height we need to check the correct height
+        ;; When we have a text with grow-type :auto-height or :auto-height we need to check the correct height
         ;; otherwise the center alignment will break
-        shape
-        (if (or (not= :auto-height (:grow-type shape)) (empty? text-modifier))
-          shape
-          (let [tr-shape (dwt/apply-text-modifier shape text-modifier)]
-            (cond-> shape
-              ;; we only change the height otherwise could cause problems with the other fields
-              (some? text-modifier)
-              (assoc  :height (:height tr-shape)))))
+        tr-shape (when text-modifier (dwt/apply-text-modifier shape text-modifier))
+        shape (cond-> shape
+                (and (some? text-modifier) (#{:auto-height :auto-width} (:grow-type shape)))
+                (assoc :width (:width tr-shape) :height (:height tr-shape)))
 
         shape (hooks/use-equal-memo shape)
 
@@ -237,7 +254,7 @@
         text-shapes
         (mf/use-memo
          (mf/deps text-shapes modifiers)
-         #(d/update-vals text-shapes (partial process-shape modifiers)))
+         #(update-vals text-shapes (partial process-shape modifiers)))
 
         editing-shape (get text-shapes edition)
 

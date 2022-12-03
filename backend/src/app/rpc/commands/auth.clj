@@ -13,11 +13,14 @@
    [app.config :as cf]
    [app.db :as db]
    [app.emails :as eml]
+   [app.http.session :as session]
    [app.loggers.audit :as audit]
+   [app.rpc :as-alias rpc]
+   [app.rpc.climit :as climit]
    [app.rpc.doc :as-alias doc]
+   [app.rpc.helpers :as rph]
    [app.rpc.mutations.teams :as teams]
    [app.rpc.queries.profile :as profile]
-   [app.rpc.semaphore :as rsem]
    [app.tokens :as tokens]
    [app.util.services :as sv]
    [app.util.time :as dt]
@@ -109,6 +112,10 @@
             (when-not (check-password profile password)
               (ex/raise :type :validation
                         :code :wrong-credentials))
+            (when-let [deleted-at (:deleted-at profile)]
+              (when (dt/is-after? (dt/now) deleted-at)
+                (ex/raise :type :validation
+                          :code :wrong-credentials)))
 
             profile)]
 
@@ -129,10 +136,10 @@
                          {:invitation-token (:invitation-token params)}
                          profile)]
 
-        (with-meta response
-          {:transform-response ((:create session) (:id profile))
-           ::audit/props (audit/profile->props profile)
-           ::audit/profile-id (:id profile)})))))
+        (-> response
+            (rph/with-transform (session/create-fn session (:id profile)))
+            (vary-meta merge {::audit/props (audit/profile->props profile)
+                              ::audit/profile-id (:id profile)}))))))
 
 (s/def ::login-with-password
   (s/keys :req-un [::email ::password]
@@ -141,7 +148,7 @@
 (sv/defmethod ::login-with-password
   "Performs authentication using penpot password."
   {:auth false
-   ::rsem/queue :auth
+   ::climit/queue :auth
    ::doc/added "1.15"}
   [cfg params]
   (login-with-password cfg params))
@@ -157,7 +164,7 @@
    ::doc/added "1.15"}
   [{:keys [session] :as cfg} _]
   (with-meta {}
-    {:transform-response (:delete session)}))
+    {::rpc/transform-response (session/delete-fn session)}))
 
 ;; ---- COMMAND: Recover Profile
 
@@ -182,7 +189,7 @@
 
 (sv/defmethod ::recover-profile
   {:auth false
-   ::rsem/queue :auth
+   ::climit/queue :auth
    ::doc/added "1.15"}
   [cfg params]
   (recover-profile cfg params))
@@ -283,7 +290,8 @@
         props     (-> (audit/extract-utm-params params)
                       (merge (:props params))
                       (merge {:viewed-tutorial? false
-                              :viewed-walkthrough? false})
+                              :viewed-walkthrough? false
+                              :nudge {:big 10 :small 1}})
                       (db/tjson))
 
         password  (if-let [password (:password params)]
@@ -397,7 +405,7 @@
             token  (tokens/generate sprops claims)
             resp   {:invitation-token token}]
         (with-meta resp
-          {:transform-response ((:create session) (:id profile))
+          {::rpc/transform-response (session/create-fn session (:id profile))
            ::audit/replace-props (audit/profile->props profile)
            ::audit/profile-id (:id profile)}))
 
@@ -406,7 +414,7 @@
       ;; we need to mark this session as logged.
       (not= "penpot" (:auth-backend profile))
       (with-meta (profile/strip-private-attrs profile)
-        {:transform-response ((:create session) (:id profile))
+        {::rpc/transform-response (session/create-fn session (:id profile))
          ::audit/replace-props (audit/profile->props profile)
          ::audit/profile-id (:id profile)})
 
@@ -414,7 +422,7 @@
       ;; to sign in the user directly, without email verification.
       (true? is-active)
       (with-meta (profile/strip-private-attrs profile)
-        {:transform-response ((:create session) (:id profile))
+        {::rpc/transform-response (session/create-fn session (:id profile))
          ::audit/replace-props (audit/profile->props profile)
          ::audit/profile-id (:id profile)})
 
@@ -431,7 +439,7 @@
 
 (sv/defmethod ::register-profile
   {:auth false
-   ::rsem/queue :auth
+   ::climit/queue :auth
    ::doc/added "1.15"}
   [{:keys [pool] :as cfg} params]
   (db/with-atomic [conn pool]

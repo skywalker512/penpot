@@ -7,6 +7,7 @@
 (ns app.main.ui.dashboard.grid
   (:require
    [app.common.data.macros :as dm]
+   [app.common.files.features :as ffeat]
    [app.common.logging :as log]
    [app.main.data.dashboard :as dd]
    [app.main.data.messages :as msg]
@@ -34,18 +35,21 @@
    [cuerdas.core :as str]
    [rumext.v2 :as mf]))
 
-(log/set-level! :info)
+(log/set-level! :debug)
 
 ;; --- Grid Item Thumbnail
 
 (defn ask-for-thumbnail
   "Creates some hooks to handle the files thumbnails cache"
   [file]
-  (wrk/ask! {:cmd :thumbnails/generate
-             :revn (:revn file)
-             :file-id (:id file)
-             :file-name (:name file)
-             :components-v2 (features/active-feature? :components-v2)}))
+  (let [features (cond-> ffeat/enabled
+                   (features/active-feature? :components-v2)
+                   (conj "components/v2"))]
+    (wrk/ask! {:cmd :thumbnails/generate
+               :revn (:revn file)
+               :file-id (:id file)
+               :file-name (:name file)
+               :features features})))
 
 (mf/defc grid-item-thumbnail
   {::mf/wrap [mf/memo]}
@@ -61,10 +65,10 @@
                (rx/subscribe-on :af)
                (rx/subs (fn [{:keys [data fonts] :as params}]
                           (run! fonts/ensure-loaded! fonts)
-                          (log/info :hint "loaded thumbnail"
-                                    :file-id (dm/str (:id file))
-                                    :file-name (:name file)
-                                    :elapsed (str/ffmt "%ms" (tp)))
+                          (log/debug :hint "loaded thumbnail"
+                                     :file-id (dm/str (:id file))
+                                     :file-name (:name file)
+                                     :elapsed (str/ffmt "%ms" (tp)))
                           (when-let [node (mf/ref-val container)]
                             (dom/set-html! node data))))))))
 
@@ -163,7 +167,7 @@
   (let [locale (mf/deref i18n/locale)
         time   (dt/timeago modified-at {:locale locale})]
     [:span.date
-     (str (tr "ds.updated-at" time))]))
+     time]))
 
 (defn create-counter-element
   [_element file-count]
@@ -177,8 +181,8 @@
   [{:keys [file navigate? origin library-view?] :as props}]
   (let [file-id         (:id file)
         local           (mf/use-state {:menu-open false
-                                        :menu-pos nil
-                                        :edition false})
+                                       :menu-pos nil
+                                       :edition false})
         selected-files  (mf/deref refs/dashboard-selected-files)
         dashboard-local (mf/deref refs/dashboard-local)
         node-ref        (mf/use-ref)
@@ -313,7 +317,7 @@
 
 
 (mf/defc grid
-  [{:keys [files project on-create-clicked origin limit library-view?] :as props}]
+  [{:keys [files project origin limit library-view? create-fn] :as props}]
   (let [dragging?  (mf/use-state false)
         project-id (:id project)
         node-ref   (mf/use-var nil)
@@ -384,20 +388,19 @@
 
        :else
        [:& empty-placeholder
-        {:default? (:is-default project)
-         :on-create-clicked on-create-clicked
-         :project project
-         :limit limit
+        {:limit limit
+         :create-fn create-fn
          :origin origin}])]))
 
 (mf/defc line-grid-row
   [{:keys [files selected-files dragging? limit] :as props}]
-  (let [limit (if dragging? (dec limit) limit)]
+  (let [elements limit
+        limit (if dragging? (dec limit) limit)]
     [:div.grid-row.no-wrap
-     {:style {:grid-template-columns (dm/str "repeat(" limit ", 1fr)")}}
+     {:style {:grid-template-columns (dm/str "repeat(" elements ", 1fr)")}}
 
      (when dragging?
-       [:div.grid-item])
+       [:div.grid-item.dragged])
      (for [item (take limit files)]
        [:& grid-item
         {:id (:id item)
@@ -407,7 +410,7 @@
          :navigate? false}])]))
 
 (mf/defc line-grid
-  [{:keys [project team files limit on-create-clicked] :as props}]
+  [{:keys [project team files limit create-fn] :as props}]
   (let [dragging?        (mf/use-state false)
         project-id       (:id project)
         team-id          (:id team)
@@ -494,8 +497,8 @@
                           :limit limit}]
 
        :else
-       [:& empty-placeholder {:dragging? @dragging?
-                              :default? (:is-default project)
-                              :on-create-clicked on-create-clicked
-                              :limit limit}])]))
+       [:& empty-placeholder
+        {:dragging? @dragging?
+         :limit limit
+         :create-fn create-fn}])]))
 

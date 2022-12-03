@@ -6,7 +6,7 @@
 
 (ns app.main.ui.viewer.handoff.right-sidebar
   (:require
-   [app.common.data :as d]
+   [app.main.data.workspace :as dw]
    [app.main.ui.components.shape-icon :as si]
    [app.main.ui.components.tab-container :refer [tab-container tab-element]]
    [app.main.ui.icons :as i]
@@ -17,21 +17,16 @@
    [rumext.v2 :as mf]))
 
 (mf/defc right-sidebar
-  [{:keys [frame page file selected]}]
+  [{:keys [frame page file selected shapes page-id file-id from]
+    :or {from :handoff}}]
   (let [expanded      (mf/use-state false)
         section       (mf/use-state :info #_:code)
-        shapes        (resolve-shapes (:objects page) selected)
+        shapes        (or shapes
+                          (resolve-shapes (:objects page) selected))
 
         first-shape   (first shapes)
-
-        selected-type (or (:type first-shape) :not-found)
-        selected-type (if (= selected-type :group)
-                        (if (some? (:component-id first-shape))
-                          :component
-                          (if (:masked-group? first-shape)
-                            :mask
-                            :group))
-                        selected-type)]
+        page-id       (or page-id (:id page))
+        file-id       (or file-id (:id file))]
 
     [:aside.settings-bar.settings-bar-right {:class (when @expanded "expanded")}
      [:div.settings-bar-inside
@@ -45,19 +40,37 @@
             [:*
              [:span.tool-window-bar-icon
               [:& si/element-icon {:shape first-shape}]]
-             [:span.tool-window-bar-title (->> selected-type d/name (str "handoff.tabs.code.selected.") (tr))]])]
-         [:div.tool-window-content
+             ;; Execution time translation strings:
+             ;;   handoff.tabs.code.selected.circle
+             ;;   handoff.tabs.code.selected.component
+             ;;   handoff.tabs.code.selected.curve
+             ;;   handoff.tabs.code.selected.frame
+             ;;   handoff.tabs.code.selected.group
+             ;;   handoff.tabs.code.selected.image
+             ;;   handoff.tabs.code.selected.mask
+             ;;   handoff.tabs.code.selected.path
+             ;;   handoff.tabs.code.selected.rect
+             ;;   handoff.tabs.code.selected.svg-raw
+             ;;   handoff.tabs.code.selected.text
+             [:span.tool-window-bar-title (:name first-shape)]])]
+         [:div.tool-window-content.inspect
           [:& tab-container {:on-change-tab #(do
                                                (reset! expanded false)
-                                               (reset! section %))
+                                               (reset! section %)
+                                               (when (= from :workspace)
+                                                 (dw/set-inspect-expanded false)))
                              :selected @section}
            [:& tab-element {:id :info :title (tr "handoff.tabs.info")}
-            [:& attributes {:page-id (:id page)
-                            :file-id (:id file)
+            [:& attributes {:page-id page-id
+                            :file-id file-id
                             :frame frame
                             :shapes shapes}]]
 
            [:& tab-element {:id :code :title (tr "handoff.tabs.code")}
             [:& code {:frame frame
                       :shapes shapes
-                      :on-expand #(swap! expanded not)}]]]]])]]))
+                      :on-expand (fn[]
+                                   (when (= from :workspace)
+                                     (dw/set-inspect-expanded (not expanded)))
+                                   (swap! expanded not))
+                      :from from}]]]]])]]))

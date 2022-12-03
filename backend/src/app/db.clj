@@ -352,10 +352,13 @@
   [v]
   (and (pgarray? v) (= "uuid" (.getBaseTypeName ^PgArray v))))
 
+;; TODO rename to decode-pgarray-into
 (defn decode-pgarray
-  ([v] (some->> ^PgArray v .getArray vec))
-  ([v in] (some->> ^PgArray v .getArray (into in)))
-  ([v in xf]  (some->> ^PgArray v .getArray (into in xf))))
+  ([v] (decode-pgarray v []))
+  ([v in]
+   (into in (some-> ^PgArray v .getArray)))
+  ([v in xf]
+   (into in xf (some-> ^PgArray v .getArray))))
 
 (defn pgarray->set
   [v]
@@ -417,21 +420,23 @@
 
 (defn decode-json-pgobject
   [^PGobject o]
-  (let [typ (.getType o)
-        val (.getValue o)]
-    (if (or (= typ "json")
-            (= typ "jsonb"))
-      (json/read val)
-      val)))
+  (when o
+    (let [typ (.getType o)
+          val (.getValue o)]
+      (if (or (= typ "json")
+              (= typ "jsonb"))
+        (json/read val)
+        val))))
 
 (defn decode-transit-pgobject
   [^PGobject o]
-  (let [typ (.getType o)
-        val (.getValue o)]
-    (if (or (= typ "json")
-            (= typ "jsonb"))
-      (t/decode-str val)
-      val)))
+  (when o
+    (let [typ (.getType o)
+          val (.getValue o)]
+      (if (or (= typ "json")
+              (= typ "jsonb"))
+        (t/decode-str val)
+        val))))
 
 (defn inet
   [ip-addr]
@@ -488,3 +493,18 @@
   (let [n   (xact-check-param n)
         row (exec-one! conn ["select pg_try_advisory_xact_lock(?::bigint) as lock" n])]
     (:lock row)))
+
+(defn sql-exception?
+  [cause]
+  (instance? java.sql.SQLException cause))
+
+(defn connection-error?
+  [cause]
+  (and (sql-exception? cause)
+       (contains? #{"08003" "08006" "08001" "08004"}
+                  (.getSQLState ^java.sql.SQLException cause))))
+
+(defn serialization-error?
+  [cause]
+  (and (sql-exception? cause)
+       (= "40001" (.getSQLState ^java.sql.SQLException cause))))

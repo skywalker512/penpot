@@ -247,6 +247,21 @@
 
    {:name "0079-mod-profile-table"
     :fn (mg/resource "app/migrations/sql/0079-mod-profile-table.sql")}
+
+   {:name "0080-mod-index-names"
+    :fn (mg/resource "app/migrations/sql/0080-mod-index-names.sql")}
+
+   {:name "0081-add-deleted-at-index-to-file-table"
+    :fn (mg/resource "app/migrations/sql/0081-add-deleted-at-index-to-file-table.sql")}
+
+   {:name "0082-add-features-column-to-file-table"
+    :fn (mg/resource "app/migrations/sql/0082-add-features-column-to-file-table.sql")}
+
+   {:name "0083-add-file-data-fragment-table"
+    :fn (mg/resource "app/migrations/sql/0083-add-file-data-fragment-table.sql")}
+
+   {:name "0084-add-features-column-to-file-change-table"
+    :fn (mg/resource "app/migrations/sql/0084-add-features-column-to-file-change-table.sql")}
    ])
 
 

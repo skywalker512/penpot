@@ -2,17 +2,16 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.common.pages.changes-builder
   (:require
    [app.common.data :as d]
    [app.common.data.macros :as dm]
+   [app.common.files.features :as ffeat]
    [app.common.geom.matrix :as gmt]
    [app.common.geom.point :as gpt]
    [app.common.geom.shapes :as gsh]
-   [app.common.geom.shapes.bool :as gshb]
-   [app.common.geom.shapes.rect :as gshr]
    [app.common.math :as mth]
    [app.common.pages :as cp]
    [app.common.pages.helpers :as cph]
@@ -50,10 +49,12 @@
 
 (defn with-objects
   [changes objects]
-  (let [file-data (-> (ctf/make-file-data (uuid/next) uuid/zero true)
-                      (assoc-in [:pages-index uuid/zero :objects] objects))]
-    (vary-meta changes assoc ::file-data file-data
-                             ::applied-changes-count 0)))
+  (let [fdata (binding [ffeat/*current* #{"components/v2"}]
+                (ctf/make-file-data (uuid/next) uuid/zero))
+        fdata (assoc-in fdata [:pages-index uuid/zero :objects] objects)]
+    (vary-meta changes assoc
+               ::file-data fdata
+               ::applied-changes-count 0)))
 
 (defn with-library-data
   [changes data]
@@ -268,7 +269,7 @@
               :page-id (::page-id (meta changes))
               :parent-id (:parent-id shape)
               :shapes [(:id shape)]
-              :index idx})))] 
+              :index idx})))]
 
      (-> changes
          (update :redo-changes conj set-parent-change)
@@ -416,7 +417,7 @@
                           (every? #(apply gpt/close? %) (d/zip old-val new-val))
 
                           (= attr :selrect)
-                          (gshr/close-selrect? old-val new-val)
+                          (gsh/close-selrect? old-val new-val)
 
                           :else
                           (= old-val new-val))]
@@ -435,7 +436,7 @@
                                  nil               ;; so it does not need resize
 
                                  (= (:type parent) :bool)
-                                 (gshb/update-bool-selrect parent children objects)
+                                 (gsh/update-bool-selrect parent children objects)
 
                                  (= (:type parent) :group)
                                  (if (:masked-group? parent)
@@ -592,7 +593,7 @@
                              :main-instance-page main-instance-page
                              :shapes new-shapes})
                       (into (map mk-change) updated-shapes))))
-        (update :undo-changes 
+        (update :undo-changes
                 (fn [undo-changes]
                   (-> undo-changes
                       (d/preconj {:type :del-component

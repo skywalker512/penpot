@@ -2,7 +2,7 @@
 ;; License, v. 2.0. If a copy of the MPL was not distributed with this
 ;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) UXBOX Labs SL
+;; Copyright (c) KALEIDOS INC
 
 (ns app.common.math
   "A collection of math utils."
@@ -19,10 +19,13 @@
   #?(:cljs (js/isNaN v)
      :clj (Double/isNaN v)))
 
+;; NOTE: on cljs we don't need to check for `number?` so we explicitly
+;; ommit it for performance reasons.
+
 (defn finite?
   [v]
   #?(:cljs (and (not (nil? v)) (js/isFinite v))
-     :clj (and (not (nil? v)) (Double/isFinite v))))
+     :clj (and (not (nil? v)) (number? v) (Double/isFinite v))))
 
 (defn finite
   [v default]
@@ -156,7 +159,7 @@
     (if (> num to) to num)))
 
 (defn almost-zero? [num]
-  (< (abs (double num)) 1e-5))
+  (< (abs (double num)) 1e-4))
 
 (defonce float-equal-precision 0.001)
 
@@ -174,3 +177,8 @@
 (defn max-abs
   [a b]
   (max (abs a) (abs b)))
+
+(defn sign
+  "Get the sign (+1 / -1) for the number"
+  [n]
+  (if (neg? n) -1 1))
